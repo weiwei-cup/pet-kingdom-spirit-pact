@@ -19,8 +19,11 @@ type Phase =
 
 type PartnerId = "leaf" | "metal" | "tide";
 type PetArtId = PartnerId | "wild" | "bird" | "guardian";
+type RouteEncounterId = "wild" | "bird";
 type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "angela";
 type Position = { x: number; y: number };
+type Size = { width: number; height: number };
+type MapRect = { x1: number; y1: number; x2: number; y2: number };
 type SaveData = { phase: Phase; playerName: string; partnerId: PartnerId | null; captured: boolean };
 
 type Partner = {
@@ -59,6 +62,14 @@ type BattleFx = {
 };
 
 type BattleFxInput = Omit<BattleFx, "id" | "stage">;
+
+type RouteEncounter = {
+  id: RouteEncounterId;
+  name: string;
+  kind: string;
+  level: number;
+  maxHp: number;
+};
 
 const SAVE_KEY = "pet-kingdom-spirit-pact-prologue-v1";
 
@@ -116,12 +127,14 @@ const CHARACTER_ART: Record<CharacterVariant, string> = {
   angela: "./pixel/character-angela.png?v=2",
 };
 
+const MAP_PLAYER_ART = "./pixel/player-walk-atlas.webp?v=3";
+
 const SCENE_ART: Record<Phase, string> = {
   title: "./pixel/title-landscape.webp?v=2",
   name: "./pixel/shelter-interior.webp?v=2",
   shelter: "./pixel/shelter-interior.webp?v=2",
-  road: "./pixel/route-map.webp?v=2",
-  capture: "./pixel/route-map.webp?v=2",
+  road: "./pixel/route-map-v2.webp?v=3",
+  capture: "./pixel/route-map-v2.webp?v=3",
   city: "./pixel/rainbow-plaza.webp?v=2",
   exam: "./pixel/academy-arena.webp?v=2",
   festival: "./pixel/rainbow-plaza.webp?v=2",
@@ -166,6 +179,47 @@ const MEMORY_TEXT = [
   "安琪儿冲进神殿，她是在阻止仪式。",
 ];
 
+const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
+  wild: { id: "wild", name: "茸角鼠", kind: "猛兽系", level: 4, maxHp: 32 },
+  bird: { id: "bird", name: "银羽雀", kind: "飞行系", level: 5, maxHp: 36 },
+};
+
+const MAP_PIXEL_SIZE = { width: 1536, height: 1024 };
+const ROAD_STEP = { x: 100 / 48, y: 100 / 32 };
+const ROAD_START: Position = { x: 16.7, y: 84.4 };
+const CITY_GATE: Position = { x: 84.5, y: 15.5 };
+
+const GRASS_ZONES: MapRect[] = [
+  { x1: 31, y1: 43, x2: 45, y2: 61 },
+  { x1: 58, y1: 22, x2: 75, y2: 43 },
+  { x1: 56, y1: 60, x2: 71, y2: 75 },
+];
+
+const WALKABLE_ZONES: MapRect[] = [
+  { x1: 4, y1: 72, x2: 34, y2: 97 },
+  { x1: 14, y1: 53, x2: 29, y2: 82 },
+  { x1: 18, y1: 50, x2: 28, y2: 66 },
+  { x1: 25, y1: 40, x2: 51, y2: 77 },
+  { x1: 36, y1: 32, x2: 62, y2: 72 },
+  { x1: 39, y1: 66, x2: 62, y2: 92 },
+  { x1: 50, y1: 42, x2: 85, y2: 76 },
+  { x1: 57, y1: 55, x2: 92, y2: 88 },
+  { x1: 76, y1: 13, x2: 91, y2: 62 },
+  { x1: 18, y1: 14, x2: 91, y2: 31 },
+];
+
+function inMapRect(position: Position, rect: MapRect) {
+  return position.x >= rect.x1 && position.x <= rect.x2 && position.y >= rect.y1 && position.y <= rect.y2;
+}
+
+function isRoadWalkable(position: Position) {
+  return WALKABLE_ZONES.some((zone) => inMapRect(position, zone));
+}
+
+function isGrassTile(position: Position) {
+  return GRASS_ZONES.some((zone) => inMapRect(position, zone));
+}
+
 function distance(a: Position, b: Position) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
@@ -190,6 +244,20 @@ function Character({ name, variant = "player", small = false }: { name: string; 
       <i className="sprite-shadow" />
       <img src={CHARACTER_ART[variant]} alt="" draggable={false} />
     </div>
+  );
+}
+
+function MapPlayerSprite({ facing, moving, step }: { facing: RoadFacing; moving: boolean; step: number }) {
+  const row = { down: 0, left: 1, right: 2, up: 3 }[facing];
+  const column = moving ? (step % 2 === 0 ? 0 : 2) : 1;
+  const x = column === 0 ? 0 : column === 1 ? 50 : 100;
+  const y = row === 0 ? 0 : row === 1 ? 100 / 3 : row === 2 ? 200 / 3 : 100;
+  return (
+    <span
+      className="map-player-frame"
+      style={{ backgroundImage: `url(${MAP_PLAYER_ART})`, backgroundPosition: `${x}% ${y}%` }}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -272,11 +340,11 @@ function DPad({ onMove, onInteract }: { onMove: (dx: number, dy: number) => void
   return (
     <div className="touch-controls">
       <div className="dpad" aria-label="移动控制">
-        <button type="button" onClick={() => onMove(0, -6)} aria-label="向上">▲</button>
-        <button type="button" onClick={() => onMove(-6, 0)} aria-label="向左">◀</button>
+        <button type="button" onClick={() => onMove(0, -1)} aria-label="向上">▲</button>
+        <button type="button" onClick={() => onMove(-1, 0)} aria-label="向左">◀</button>
         <i />
-        <button type="button" onClick={() => onMove(6, 0)} aria-label="向右">▶</button>
-        <button type="button" onClick={() => onMove(0, 6)} aria-label="向下">▼</button>
+        <button type="button" onClick={() => onMove(1, 0)} aria-label="向右">▶</button>
+        <button type="button" onClick={() => onMove(0, 1)} aria-label="向下">▼</button>
       </div>
       <button type="button" className="interact-button" onClick={onInteract}><span>E</span>互动</button>
     </div>
@@ -297,13 +365,20 @@ export default function Home() {
   const [battleBusy, setBattleBusy] = useState(false);
   const battleFxId = useRef(0);
 
-  const [roadPos, setRoadPos] = useState<Position>({ x: 29, y: 78 });
+  const [roadPos, setRoadPos] = useState<Position>(ROAD_START);
   const [roadFacing, setRoadFacing] = useState<RoadFacing>("right");
   const [roadMoving, setRoadMoving] = useState(false);
   const [roadStep, setRoadStep] = useState(0);
-  const [roadMoveDuration, setRoadMoveDuration] = useState(140);
+  const [roadBumped, setRoadBumped] = useState(false);
+  const [roadInGrass, setRoadInGrass] = useState(false);
+  const [fieldSize, setFieldSize] = useState<Size>({ width: 1280, height: 720 });
+  const [encounterPending, setEncounterPending] = useState(false);
+  const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
+  const fieldViewportRef = useRef<HTMLDivElement | null>(null);
+  const grassStepsRef = useRef(0);
   const roadStopTimer = useRef<number | null>(null);
-  const [berry, setBerry] = useState(false);
+  const roadBumpTimer = useRef<number | null>(null);
+  const [berry, setBerry] = useState(true);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
   const [balls, setBalls] = useState(3);
@@ -324,6 +399,21 @@ export default function Home() {
   const [bossWon, setBossWon] = useState(false);
 
   const partner = partnerId ? PARTNERS[partnerId] : null;
+  const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
+
+  const mapCamera = useMemo(() => {
+    const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
+    const width = MAP_PIXEL_SIZE.width * scale;
+    const height = MAP_PIXEL_SIZE.height * scale;
+    const playerX = (roadPos.x / 100) * width;
+    const playerY = (roadPos.y / 100) * height;
+    return {
+      width,
+      height,
+      x: Math.min(0, Math.max(fieldSize.width - width, fieldSize.width / 2 - playerX)),
+      y: Math.min(0, Math.max(fieldSize.height - height, fieldSize.height / 2 - playerY)),
+    };
+  }, [fieldSize, roadPos]);
 
   useEffect(() => {
     let hasSavedGame = false;
@@ -349,7 +439,18 @@ export default function Home() {
 
   useEffect(() => () => {
     if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
+    if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "road" || !fieldViewportRef.current) return;
+    const viewport = fieldViewportRef.current;
+    const updateSize = () => setFieldSize({ width: viewport.clientWidth, height: viewport.clientHeight });
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [phase]);
 
   const playTone = useCallback((pitch = 440) => {
     if (!soundOn || typeof window === "undefined") return;
@@ -404,15 +505,22 @@ export default function Home() {
     setCaptured(false);
     setBattleFx(null);
     setBattleBusy(false);
-    setRoadPos({ x: 29, y: 78 });
+    setRoadPos(ROAD_START);
     setRoadFacing("right");
     setRoadMoving(false);
     setRoadStep(0);
-    setBerry(false);
+    setRoadBumped(false);
+    setRoadInGrass(false);
+    setEncounterPending(false);
+    setRouteEncounterId("wild");
+    grassStepsRef.current = 0;
+    setBerry(true);
     setWildHp(32);
     setWildCalm(0);
     setBalls(3);
     setCaptureWon(false);
+    setCaptureLog("高草突然晃动，一只茸角鼠警惕地跳了出来！");
+    setToast("沿道路前进，在高草里寻找野生宠物");
     setExamHp(62);
     setExamEnemy(48);
     setExamWon(false);
@@ -449,62 +557,100 @@ export default function Home() {
   const triggerRoadMotion = useCallback((dx: number, dy: number, duration: number) => {
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
     else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
-    setRoadMoveDuration(duration);
     setRoadMoving(true);
     setRoadStep((step) => step + 1);
     if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
     roadStopTimer.current = window.setTimeout(() => setRoadMoving(false), duration + 70);
   }, []);
 
-  const moveRoad = useCallback((dx: number, dy: number) => {
-    triggerRoadMotion(dx, dy, 135);
-    setRoadPos((position) => ({
-      x: Math.max(7, Math.min(92, position.x + dx)),
-      y: Math.max(24, Math.min(79, position.y + dy)),
-    }));
-  }, [triggerRoadMotion]);
+  const beginRouteEncounter = useCallback((id: RouteEncounterId) => {
+    const encounter = ROUTE_ENCOUNTERS[id];
+    setRouteEncounterId(id);
+    setWildHp(encounter.maxHp);
+    setWildCalm(0);
+    setBalls(3);
+    setCaptureWon(false);
+    setCaptureLog(`高草突然晃动，${encounter.name}警惕地跳了出来！`);
+    setToast(`野生的${encounter.name}出现了！`);
+    setEncounterPending(true);
+    playTone(210);
+  }, [playTone]);
 
-  const travelRoadTo = useCallback((target: Position) => {
+  const moveRoad = useCallback((dx: number, dy: number) => {
+    if (encounterPending) return;
+    if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
+    else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
+
     const next = {
-      x: Math.max(7, Math.min(92, target.x)),
-      y: Math.max(24, Math.min(79, target.y)),
+      x: roadPos.x + Math.sign(dx) * ROAD_STEP.x,
+      y: roadPos.y + Math.sign(dy) * ROAD_STEP.y,
     };
-    const dx = next.x - roadPos.x;
-    const dy = next.y - roadPos.y;
-    const duration = Math.round(Math.max(260, Math.min(760, distance(roadPos, next) * 13)));
-    triggerRoadMotion(dx, dy, duration);
+    if (!isRoadWalkable(next)) {
+      setRoadMoving(false);
+      setRoadBumped(true);
+      setToast("前方是岩壁或水面，换一条路试试。");
+      playTone(115);
+      if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
+      roadBumpTimer.current = window.setTimeout(() => setRoadBumped(false), 190);
+      return;
+    }
+
+    triggerRoadMotion(dx, dy, 125);
     setRoadPos(next);
-  }, [roadPos, triggerRoadMotion]);
+    const inGrass = isGrassTile(next);
+    setRoadInGrass(inGrass);
+    if (!inGrass) {
+      grassStepsRef.current = 0;
+      setToast(captured ? "沿道路向东北走，到彩虹城门前按 E。" : "高草里有野生宠物活动的痕迹。");
+      return;
+    }
+    if (captured) {
+      setToast("高草沙沙作响。图鉴里已经有这片区域的记录。");
+      return;
+    }
+
+    grassStepsRef.current += 1;
+    const steps = grassStepsRef.current;
+    const chance = steps < 3 ? 0 : Math.min(0.18 + (steps - 3) * 0.12, 0.72);
+    setToast(steps < 3 ? "高草在脚边晃动……" : "附近传来了野生宠物的叫声！");
+    if (steps >= 9 || Math.random() < chance) {
+      grassStepsRef.current = 0;
+      beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
+    }
+  }, [beginRouteEncounter, captured, encounterPending, playTone, roadPos, triggerRoadMotion]);
 
   const roadInteraction = useCallback(() => {
-    const berrySpot = { x: 34, y: 42 };
-    const wildSpot = { x: 75, y: 55 };
-    if (!berry && distance(roadPos, berrySpot) < 14) {
-      setBerry(true);
-      setToast("获得了香甜莓果 ×1 · 野生宠物喜欢它的气味");
-      playTone(720);
-      return;
-    }
-    if (distance(roadPos, wildSpot) < 15) {
-      if (!berry) {
-        setToast("茸角鼠很害怕。也许附近有能让它安心的东西。");
+    if (distance(roadPos, CITY_GATE) < 8) {
+      if (!captured) {
+        setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
+        playTone(150);
         return;
       }
-      go("capture");
+      setToast("城门守卫确认了图鉴记录。欢迎来到彩虹城！");
+      go("city");
       return;
     }
-    setToast("这里没有可以互动的东西。靠近发光标记再试试。");
-  }, [berry, go, playTone, roadPos]);
+    setToast(captured ? "东北方的彩虹城门正在闪光，靠近后按 E。" : "进入金色高草移动，野生宠物会随机出现。");
+  }, [captured, go, playTone, roadPos]);
+
+  useEffect(() => {
+    if (!encounterPending) return;
+    const timer = window.setTimeout(() => {
+      setEncounterPending(false);
+      go("capture");
+    }, 760);
+    return () => window.clearTimeout(timer);
+  }, [encounterPending, go]);
 
   useEffect(() => {
     if (phase !== "road") return;
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", "e"].includes(key)) event.preventDefault();
-      if (key === "arrowup" || key === "w") moveRoad(0, -4);
-      if (key === "arrowdown" || key === "s") moveRoad(0, 4);
-      if (key === "arrowleft" || key === "a") moveRoad(-4, 0);
-      if (key === "arrowright" || key === "d") moveRoad(4, 0);
+      if (key === "arrowup" || key === "w") moveRoad(0, -1);
+      if (key === "arrowdown" || key === "s") moveRoad(0, 1);
+      if (key === "arrowleft" || key === "a") moveRoad(-1, 0);
+      if (key === "arrowright" || key === "d") moveRoad(1, 0);
       if (key === "e") roadInteraction();
     };
     window.addEventListener("keydown", handler);
@@ -520,14 +666,14 @@ export default function Home() {
         const nextHp = Math.max(4, wildHp - damage);
         setCaptureLog(`${partner.name}压低身体，准备使出${partner.attack}！`);
         await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
-        setCaptureLog(`${partner.attack}命中！茸角鼠踉跄后退，动作慢了下来。`);
+        setCaptureLog(`${partner.attack}命中！${routeEncounter.name}踉跄后退，动作慢了下来。`);
         return;
       }
       if (action === "calm") {
         const nextCalm = Math.min(3, wildCalm + 1);
         setCaptureLog("你没有逼近，而是把香甜莓果轻轻放到了地上。");
         await animateBattleFx({ skill: "安抚 · 香甜莓果", kind: "calm", attacker: "trainer", target: "enemy", value: "戒备 ↓", positive: true }, () => setWildCalm(nextCalm));
-        setCaptureLog(berry ? "茸角鼠嗅了嗅莓果，耳朵慢慢放松下来。" : "茸角鼠仍然很戒备。");
+        setCaptureLog(berry ? `${routeEncounter.name}嗅了嗅莓果，戒备的姿势慢慢放松下来。` : `${routeEncounter.name}仍然很戒备。`);
         return;
       }
       if (balls <= 0) {
@@ -535,8 +681,9 @@ export default function Home() {
         setBalls(2);
         return;
       }
-      const success = wildHp <= 16 && wildCalm >= 1;
-      setCaptureLog("召唤胶囊划出一道弧光，落在茸角鼠面前……");
+      const captureThreshold = Math.ceil(routeEncounter.maxHp / 2);
+      const success = wildHp <= captureThreshold && wildCalm >= 1;
+      setCaptureLog(`召唤胶囊划出一道弧光，落在${routeEncounter.name}面前……`);
       await animateBattleFx({ skill: "召唤胶囊", kind: "capsule", attacker: "trainer", target: "enemy", value: success ? "灵契成立" : "挣脱！", positive: success }, () => {
         setBalls((value) => value - 1);
         if (success) {
@@ -544,7 +691,7 @@ export default function Home() {
           setCaptureWon(true);
         }
       });
-      setCaptureLog(success ? "胶囊没有强行关闭。茸角鼠主动触碰按钮，接受了你的邀请。" : wildHp > 16 ? "茸角鼠还有力气挣脱。先让它停下来。" : "它的体力已经很低，但仍不信任你。试着安抚它。");
+      setCaptureLog(success ? `胶囊没有强行关闭。${routeEncounter.name}主动触碰按钮，接受了你的邀请。` : wildHp > captureThreshold ? `${routeEncounter.name}还有力气挣脱。先让它停下来。` : "它的体力已经很低，但仍不信任你。试着安抚它。");
     } finally {
       setBattleBusy(false);
     }
@@ -746,28 +893,30 @@ export default function Home() {
       {phase === "road" && partner && (
         <section className="field-screen">
           <div className="mission-card">
-            <small>当前目标</small><h3>前往彩虹城</h3><p>沿石径向东北前进。途中似乎有宠物的叫声。</p>
-            <div className="mission-items"><span className={berry ? "done" : ""}>◇ 找到安抚用的莓果</span><span>◇ 查看被困的宠物</span></div>
-          </div>
-          <div className="field-world" onPointerDown={(event) => {
-            if ((event.target as HTMLElement).closest("button")) return;
-            const box = event.currentTarget.getBoundingClientRect();
-            travelRoadTo({ x: ((event.clientX - box.left) / box.width) * 100, y: ((event.clientY - box.top) / box.height) * 100 });
-          }}>
-            <div className="field-skyline"><i /><i /><i /></div>
-            <div className="river" /><div className="stone-path" />
-            <div className="tree-line tree-line-back">{Array.from({ length: 11 }).map((_, index) => <i key={index} />)}</div>
-            <div className="tree-line tree-line-front">{Array.from({ length: 7 }).map((_, index) => <i key={index} />)}</div>
-            <button type="button" className={`map-object berry-object${berry ? " collected" : ""}`} style={{ left: "34%", top: "42%" }} onClick={(event) => { event.stopPropagation(); travelRoadTo({ x: 34, y: 42 }); }} aria-label="莓果丛"><span>✦</span></button>
-            <button type="button" className="map-object wild-object" style={{ left: "75%", top: "55%" }} onClick={(event) => { event.stopPropagation(); travelRoadTo({ x: 75, y: 55 }); }} aria-label="被困的茸角鼠"><PetSprite id="wild" size="sm" /><span>!</span></button>
-            <div className={`player-party facing-${roadFacing}${roadMoving ? " is-walking" : ""} step-${roadStep % 2}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%`, transitionDuration: `${roadMoveDuration}ms` }}>
-              <i className="step-dust" aria-hidden="true" />
-              <Character name={playerName} small />
-              <PetSprite id={partner.id} size="sm" />
+            <small>当前目标</small><h3>{captured ? "前往彩虹城" : "第一次野外捕捉"}</h3>
+            <p>{captured ? "沿道路向东北前进，在城门标记前按 E。" : "进入金色高草移动，遭遇并捕捉一只野生宠物。"}</p>
+            <div className="mission-items">
+              <span className={captured ? "done" : ""}>◇ 在高草中遭遇宠物</span>
+              <span className={captured ? "done" : ""}>◇ 完成一次捕捉</span>
+              <span>◇ 抵达东北方城门</span>
             </div>
-            <div className="city-gate-marker"><span>彩虹城</span><i>›</i></div>
           </div>
-          <div className="field-toast"><span>{berry ? "莓" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
+          <div className="field-world" ref={fieldViewportRef} aria-label="临虹村外可探索地图">
+            <div className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
+              <img className="rpg-map-image" src={SCENE_ART.road} alt="临虹村外通往彩虹城的草原路线" draggable={false} />
+              <button type="button" className={`city-gate-marker${captured ? " gate-ready" : ""}`} style={{ left: `${CITY_GATE.x}%`, top: `${CITY_GATE.y}%` }} onClick={roadInteraction} aria-label="进入彩虹城">
+                <span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i>
+              </button>
+              <div className={`map-player facing-${roadFacing}${roadMoving ? " is-walking" : ""}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}>
+                <i className="map-player-shadow" aria-hidden="true" />
+                <MapPlayerSprite facing={roadFacing} moving={roadMoving} step={roadStep} />
+                <div className="map-companion" aria-hidden="true"><PetSprite id={partner.id} size="sm" /></div>
+                {roadInGrass && <i className="grass-foreground" aria-hidden="true" />}
+              </div>
+            </div>
+          </div>
+          {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
+          <div className="field-toast"><span>{roadInGrass ? "草" : captured ? "城" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
           <DPad onMove={moveRoad} onInteract={roadInteraction} />
         </section>
       )}
@@ -776,10 +925,10 @@ export default function Home() {
         <section className={`battle-screen capture-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop field-battle-bg"><i /><i /><i /></div>
           <BattleEffects fx={battleFx} />
-          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>第一次邀请</h2><p>被困的宠物不会因为获救就立刻相信你。</p></div>
+          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>高草遭遇</h2><p>先降低体力，再用莓果安抚，最后投出召唤胶囊。</p></div>
           <div className="enemy-side">
-            <div className="combatant-info"><span><b>茸角鼠</b><small>猛兽系 · Lv.4</small></span><em>{wildHp} / 32</em><Meter value={wildHp} max={32} /></div>
-            <div className={battleActorClass("enemy", battleFx)}><PetSprite id="wild" size="xl" /></div>
+            <div className="combatant-info"><span><b>{routeEncounter.name}</b><small>{routeEncounter.kind} · Lv.{routeEncounter.level}</small></span><em>{wildHp} / {routeEncounter.maxHp}</em><Meter value={wildHp} max={routeEncounter.maxHp} /></div>
+            <div className={battleActorClass("enemy", battleFx)}><PetSprite id={routeEncounter.id} size="xl" /></div>
             <div className="calm-indicator"><span>戒备</span><Meter value={wildCalm} max={3} kind="calm" /></div>
           </div>
           <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.5</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
@@ -789,7 +938,7 @@ export default function Home() {
               <button type="button" disabled={battleBusy} onClick={() => captureAction("attack")}><span>攻击</span><b>{partner.attack}</b><small>降低体力</small></button>
               <button type="button" disabled={battleBusy} onClick={() => captureAction("calm")}><span>安抚</span><b>放下莓果</b><small>降低戒备</small></button>
               <button type="button" disabled={battleBusy} className="ball-command" onClick={() => captureAction("ball")}><span>道具 · {balls}</span><b>召唤胶囊</b><small>邀请同行</small></button>
-            </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("city")}><span>带着新伙伴进城</span><b>›</b></button>}
+            </div> : <button type="button" className="primary-action battle-continue" onClick={() => { setToast("捕捉完成。沿道路前往东北方的彩虹城门。"); setRoadInGrass(false); go("road"); }}><span>带新伙伴返回地图</span><b>›</b></button>}
           </div>
         </section>
       )}
@@ -869,7 +1018,7 @@ export default function Home() {
 
       {phase === "ending" && partner && (
         <section className="ending-screen">
-          <div className="ending-landscape"><div className="dawn-orb" /><div className="ending-city"><i /><i /><i /></div><div className="ending-party"><Character name={playerName} /><PetSprite id={partner.id} size="lg" />{captured && <PetSprite id="wild" size="md" />}</div></div>
+          <div className="ending-landscape"><div className="dawn-orb" /><div className="ending-city"><i /><i /><i /></div><div className="ending-party"><Character name={playerName} /><PetSprite id={partner.id} size="lg" />{captured && <PetSprite id={routeEncounter.id} size="md" />}</div></div>
           <div className="ending-card">
             <div className="ending-kicker">PROLOGUE COMPLETE</div>
             <h2>没有登记的伙伴</h2>
@@ -891,7 +1040,7 @@ export default function Home() {
           <section className="help-modal" onClick={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setHelpOpen(false)} aria-label="关闭">×</button>
             <small>TRAINER HANDBOOK</small><h2>旅行手册</h2>
-            <div className="help-grid"><div><kbd>WASD</kbd><b>移动</b><p>野外也支持方向键和点击地面。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近发光物体、宠物或人物。</p></div><div><kbd>Enter</kbd><b>继续对话</b><p>也可以点击对话框。</p></div><div><kbd>自动</kbd><b>保存进度</b><p>每次进入新场景都会保存在本机。</p></div></div>
+            <div className="help-grid"><div><kbd>WASD</kbd><b>格子移动</b><p>也支持方向键；水面和峭壁不能通行。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、发光物体或人物。</p></div><div><kbd>高草</kbd><b>野外遭遇</b><p>在金色高草里移动会遇到野生宠物。</p></div><div><kbd>自动</kbd><b>保存进度</b><p>每次进入新场景都会保存在本机。</p></div></div>
             <p className="help-note">这是《宠物王国：灵契》的可玩序章原型，玩法与剧情会在后续章节中继续扩展。</p>
           </section>
         </div>
