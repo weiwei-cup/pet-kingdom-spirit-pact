@@ -2,6 +2,8 @@
 
 《宠物王国》世界观的非商业同人续作可玩序章。
 
+在线试玩：[GitHub Pages](https://weiwei-cup.github.io/pet-kingdom-spirit-pact/)
+
 彩虹庆典上，所有登记过灵契的宠物同时忘记主人。玩家将从临虹村出发，选择第一位主动跟随自己的伙伴，完成捕捉与学院考核，并在灵契断裂事件中守护白裂狮的三段记忆。
 
 ## 序章内容
@@ -22,3 +24,7 @@
 npm install
 npm run dev
 ```
+
+## GitHub Pages
+
+推送到 `main` 分支后，GitHub Actions 会自动生成并发布静态版本。

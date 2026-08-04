@@ -232,23 +232,25 @@ export default function Home() {
   const partner = partnerId ? PARTNERS[partnerId] : null;
 
   useEffect(() => {
+    let hasSavedGame = false;
     try {
       const raw = window.localStorage.getItem(SAVE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw) as SaveData;
       if (saved.playerName && saved.phase) {
-        setSaveAvailable(true);
+        hasSavedGame = true;
       }
     } catch {
       window.localStorage.removeItem(SAVE_KEY);
     }
+    const timer = window.setTimeout(() => setSaveAvailable(hasSavedGame), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (phase === "title" || phase === "name") return;
     const save: SaveData = { phase, playerName, partnerId, captured };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-    setSaveAvailable(true);
   }, [captured, partnerId, phase, playerName]);
 
   const playTone = useCallback((pitch = 440) => {
