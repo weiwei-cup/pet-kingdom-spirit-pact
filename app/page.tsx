@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -17,6 +18,8 @@ type Phase =
   | "ending";
 
 type PartnerId = "leaf" | "metal" | "tide";
+type PetArtId = PartnerId | "wild" | "bird" | "guardian";
+type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "angela";
 type Position = { x: number; y: number };
 type SaveData = { phase: Phase; playerName: string; partnerId: PartnerId | null; captured: boolean };
 
@@ -77,6 +80,47 @@ const PARTNERS: Record<PartnerId, Partner> = {
   },
 };
 
+const PET_ART: Record<PetArtId, string> = {
+  leaf: "./pixel/pet-leaf.png?v=2",
+  metal: "./pixel/pet-metal.png?v=2",
+  tide: "./pixel/pet-tide.png?v=2",
+  wild: "./pixel/pet-wild.png?v=2",
+  bird: "./pixel/pet-bird.png?v=2",
+  guardian: "./pixel/pet-guardian.png?v=2",
+};
+
+const CHARACTER_ART: Record<CharacterVariant, string> = {
+  player: "./pixel/character-player.png?v=2",
+  keeper: "./pixel/character-keeper.png?v=2",
+  noah: "./pixel/character-noah.png?v=2",
+  jingjing: "./pixel/character-jingjing.png?v=2",
+  sergi: "./pixel/character-sergi.png?v=2",
+  angela: "./pixel/character-angela.png?v=2",
+};
+
+const SCENE_ART: Record<Phase, string> = {
+  title: "./pixel/title-landscape.webp?v=2",
+  name: "./pixel/shelter-interior.webp?v=2",
+  shelter: "./pixel/shelter-interior.webp?v=2",
+  road: "./pixel/route-map.webp?v=2",
+  capture: "./pixel/route-map.webp?v=2",
+  city: "./pixel/rainbow-plaza.webp?v=2",
+  exam: "./pixel/academy-arena.webp?v=2",
+  festival: "./pixel/rainbow-plaza.webp?v=2",
+  rupture: "./pixel/rainbow-plaza.webp?v=2",
+  boss: "./pixel/spirit-sanctum.webp?v=2",
+  aftermath: "./pixel/spirit-sanctum.webp?v=2",
+  ending: "./pixel/title-landscape.webp?v=2",
+};
+
+const FESTIVAL_HEROES: Array<{ name: string; variant: CharacterVariant }> = [
+  { name: "晶晶", variant: "jingjing" },
+  { name: "帅帅", variant: "player" },
+  { name: "卢克", variant: "noah" },
+  { name: "米罗", variant: "angela" },
+  { name: "塞其", variant: "sergi" },
+];
+
 const FESTIVAL_LINES: DialogueLine[] = [
   { speaker: "塞其", role: "现任黄金训练师", text: "欢迎来到彩虹学院。今天之后，你们之中会有人第一次与宠物立下灵契。" },
   { speaker: "帅帅", role: "前代黄金训练师", text: "先说好，考核输给姐姐不丢人——我小时候也只输过那么一点点。" },
@@ -108,32 +152,21 @@ function distance(a: Position, b: Position) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function PetSprite({ id, size = "md", sleeping = false, glitched = false }: { id: PartnerId | "wild" | "bird" | "guardian"; size?: "sm" | "md" | "lg" | "xl"; sleeping?: boolean; glitched?: boolean }) {
+function PetSprite({ id, size = "md", sleeping = false, glitched = false }: { id: PetArtId; size?: "sm" | "md" | "lg" | "xl"; sleeping?: boolean; glitched?: boolean }) {
   return (
     <div className={`pet-sprite pet-${id} pet-${size}${sleeping ? " sleeping" : ""}${glitched ? " glitched" : ""}`} aria-hidden="true">
-      <i className="pet-shadow" />
-      <i className="pet-tail" />
-      <i className="pet-body" />
-      <i className="pet-ear pet-ear-left" />
-      <i className="pet-ear pet-ear-right" />
-      <i className="pet-face" />
-      <i className="pet-eye pet-eye-left" />
-      <i className="pet-eye pet-eye-right" />
-      <i className="pet-mark" />
+      <i className="sprite-shadow" />
+      <img src={PET_ART[id]} alt="" draggable={false} />
       {sleeping && <b className="sleep-mark">z</b>}
     </div>
   );
 }
 
-function Character({ name, variant = "player", small = false }: { name: string; variant?: "player" | "keeper" | "noah" | "sergi" | "angela"; small?: boolean }) {
+function Character({ name, variant = "player", small = false }: { name: string; variant?: CharacterVariant; small?: boolean }) {
   return (
     <div className={`character character-${variant}${small ? " character-small" : ""}`} aria-label={name}>
-      <i className="char-shadow" />
-      <i className="char-legs" />
-      <i className="char-body" />
-      <i className="char-head" />
-      <i className="char-hair" />
-      <i className="char-detail" />
+      <i className="sprite-shadow" />
+      <img src={CHARACTER_ART[variant]} alt="" draggable={false} />
     </div>
   );
 }
@@ -208,7 +241,7 @@ export default function Home() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
 
-  const [roadPos, setRoadPos] = useState<Position>({ x: 12, y: 70 });
+  const [roadPos, setRoadPos] = useState<Position>({ x: 29, y: 78 });
   const [berry, setBerry] = useState(false);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
@@ -285,7 +318,7 @@ export default function Home() {
     setDraftName("小澈");
     setPartnerId(null);
     setCaptured(false);
-    setRoadPos({ x: 12, y: 70 });
+    setRoadPos({ x: 29, y: 78 });
     setBerry(false);
     setWildHp(32);
     setWildCalm(0);
@@ -489,6 +522,7 @@ export default function Home() {
 
   return (
     <main className={`game-shell phase-${phase}`}>
+      <img className="scene-image" src={SCENE_ART[phase]} alt="" aria-hidden="true" draggable={false} />
       <div className="world-noise" />
       {phase !== "title" && (
         <header className="game-hud">
@@ -644,7 +678,7 @@ export default function Home() {
       )}
 
       {phase === "festival" && (
-        <Dialogue lines={FESTIVAL_LINES} onComplete={() => go("rupture")} backdrop={<div className="festival-bg"><div className="rainbow-ring"><i /><i /><i /><i /><i /></div><div className="hero-line">{["晶", "帅", "卢", "米", "塞"].map((hero, index) => <div key={hero} className={`hero-token hero-${index}`}><span>{hero}</span><i /></div>)}</div><div className="crowd-line">{Array.from({ length: 18 }).map((_, index) => <i key={index} />)}</div></div>} />
+        <Dialogue lines={FESTIVAL_LINES} onComplete={() => go("rupture")} backdrop={<div className="festival-bg"><div className="rainbow-ring"><i /><i /><i /><i /><i /></div><div className="hero-line">{FESTIVAL_HEROES.map((hero, index) => <div key={hero.name} className={`hero-token hero-${index}`}><Character name={hero.name} variant={hero.variant} /><span>{hero.name}</span></div>)}</div><div className="crowd-line">{Array.from({ length: 18 }).map((_, index) => <i key={index} />)}</div></div>} />
       )}
 
       {phase === "rupture" && partner && (
