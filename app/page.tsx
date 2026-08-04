@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Phase =
   | "title"
@@ -41,6 +41,24 @@ type DialogueLine = {
   text: string;
   tone?: "normal" | "warning" | "soft";
 };
+
+type RoadFacing = "up" | "down" | "left" | "right";
+type BattleSide = "ally" | "enemy" | "trainer";
+type BattleFxKind = PartnerId | "wind" | "guard" | "heal" | "calm" | "capsule" | "memory" | "call" | "claw";
+type BattleFxStage = "announce" | "charge" | "launch" | "impact";
+
+type BattleFx = {
+  id: number;
+  skill: string;
+  kind: BattleFxKind;
+  attacker: BattleSide;
+  target: Exclude<BattleSide, "trainer">;
+  stage: BattleFxStage;
+  value?: string;
+  positive?: boolean;
+};
+
+type BattleFxInput = Omit<BattleFx, "id" | "stage">;
 
 const SAVE_KEY = "pet-kingdom-spirit-pact-prologue-v1";
 
@@ -152,6 +170,10 @@ function distance(a: Position, b: Position) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function PetSprite({ id, size = "md", sleeping = false, glitched = false }: { id: PetArtId; size?: "sm" | "md" | "lg" | "xl"; sleeping?: boolean; glitched?: boolean }) {
   return (
     <div className={`pet-sprite pet-${id} pet-${size}${sleeping ? " sleeping" : ""}${glitched ? " glitched" : ""}`} aria-hidden="true">
@@ -176,6 +198,37 @@ function Meter({ value, max, kind = "hp" }: { value: number; max: number; kind?:
   return (
     <div className={`meter meter-${kind}`}>
       <i style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+function battleActorClass(side: Exclude<BattleSide, "trainer">, fx: BattleFx | null) {
+  const classes = ["battle-pet", `${side}-pet`];
+  if (!fx) return classes.join(" ");
+  if (fx.attacker === side && fx.stage === "charge") classes.push("is-charging");
+  if (fx.attacker === side && fx.stage === "launch") classes.push("is-attacking");
+  if (fx.target === side && fx.stage === "impact") classes.push(fx.positive ? "is-buffed" : "is-hit");
+  return classes.join(" ");
+}
+
+function BattleEffects({ fx }: { fx: BattleFx | null }) {
+  if (!fx) return null;
+  const isAction = fx.attacker === "trainer" ? "TRAINER ACTION" : fx.attacker === "ally" ? "PARTNER SKILL" : "ENEMY MOVE";
+  return (
+    <div className={`battle-fx-layer fx-${fx.kind} stage-${fx.stage}`} aria-live="polite">
+      <div className="skill-banner"><small>{isAction}</small><b>{fx.skill}</b><i /></div>
+      <div className={`fx-stream from-${fx.attacker} to-${fx.target}`} aria-hidden="true">
+        {Array.from({ length: 8 }).map((_, index) => <i key={index} />)}
+      </div>
+      {fx.stage === "impact" && (
+        <>
+          <div className={`impact-burst target-${fx.target}`} aria-hidden="true">
+            {Array.from({ length: 10 }).map((_, index) => <i key={index} />)}
+          </div>
+          {fx.value && <div className={`damage-pop target-${fx.target}${fx.positive ? " positive" : ""}`}>{fx.value}</div>}
+        </>
+      )}
+      <div className="battle-speedlines" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
     </div>
   );
 }
@@ -240,8 +293,16 @@ export default function Home() {
   const [soundOn, setSoundOn] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
+  const [battleFx, setBattleFx] = useState<BattleFx | null>(null);
+  const [battleBusy, setBattleBusy] = useState(false);
+  const battleFxId = useRef(0);
 
   const [roadPos, setRoadPos] = useState<Position>({ x: 29, y: 78 });
+  const [roadFacing, setRoadFacing] = useState<RoadFacing>("right");
+  const [roadMoving, setRoadMoving] = useState(false);
+  const [roadStep, setRoadStep] = useState(0);
+  const [roadMoveDuration, setRoadMoveDuration] = useState(140);
+  const roadStopTimer = useRef<number | null>(null);
   const [berry, setBerry] = useState(false);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
@@ -286,6 +347,10 @@ export default function Home() {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   }, [captured, partnerId, phase, playerName]);
 
+  useEffect(() => () => {
+    if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
+  }, []);
+
   const playTone = useCallback((pitch = 440) => {
     if (!soundOn || typeof window === "undefined") return;
     try {
@@ -307,6 +372,25 @@ export default function Home() {
     }
   }, [soundOn]);
 
+  const animateBattleFx = useCallback(async (input: BattleFxInput, onImpact?: () => void) => {
+    const id = ++battleFxId.current;
+    const show = (stage: BattleFxStage) => setBattleFx({ ...input, id, stage });
+    show("announce");
+    playTone(input.positive ? 620 : input.attacker === "enemy" ? 180 : 390);
+    await wait(320);
+    show("charge");
+    await wait(190);
+    show("launch");
+    playTone(input.kind === "tide" ? 540 : input.kind === "leaf" ? 470 : input.kind === "metal" ? 280 : 330);
+    await wait(290);
+    show("impact");
+    onImpact?.();
+    playTone(input.positive ? 760 : input.attacker === "enemy" ? 130 : 220);
+    await wait(430);
+    setBattleFx((current) => current?.id === id ? null : current);
+    await wait(90);
+  }, [playTone]);
+
   const go = useCallback((next: Phase) => {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
     setPhase(next);
@@ -318,7 +402,12 @@ export default function Home() {
     setDraftName("小澈");
     setPartnerId(null);
     setCaptured(false);
+    setBattleFx(null);
+    setBattleBusy(false);
     setRoadPos({ x: 29, y: 78 });
+    setRoadFacing("right");
+    setRoadMoving(false);
+    setRoadStep(0);
     setBerry(false);
     setWildHp(32);
     setWildCalm(0);
@@ -343,6 +432,7 @@ export default function Home() {
       setPlayerName(saved.playerName || "小澈");
       setDraftName(saved.playerName || "小澈");
       setPartnerId(saved.partnerId);
+      setExamHp(saved.partnerId ? PARTNERS[saved.partnerId].hp : 62);
       setCaptured(Boolean(saved.captured));
       setPhase(saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase);
     } catch {
@@ -352,15 +442,39 @@ export default function Home() {
 
   const selectPartner = (id: PartnerId) => {
     setPartnerId(id);
+    setExamHp(PARTNERS[id].hp);
     playTone(id === "leaf" ? 480 : id === "metal" ? 330 : 580);
   };
 
+  const triggerRoadMotion = useCallback((dx: number, dy: number, duration: number) => {
+    if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
+    else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
+    setRoadMoveDuration(duration);
+    setRoadMoving(true);
+    setRoadStep((step) => step + 1);
+    if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
+    roadStopTimer.current = window.setTimeout(() => setRoadMoving(false), duration + 70);
+  }, []);
+
   const moveRoad = useCallback((dx: number, dy: number) => {
+    triggerRoadMotion(dx, dy, 135);
     setRoadPos((position) => ({
       x: Math.max(7, Math.min(92, position.x + dx)),
       y: Math.max(24, Math.min(79, position.y + dy)),
     }));
-  }, []);
+  }, [triggerRoadMotion]);
+
+  const travelRoadTo = useCallback((target: Position) => {
+    const next = {
+      x: Math.max(7, Math.min(92, target.x)),
+      y: Math.max(24, Math.min(79, target.y)),
+    };
+    const dx = next.x - roadPos.x;
+    const dy = next.y - roadPos.y;
+    const duration = Math.round(Math.max(260, Math.min(760, distance(roadPos, next) * 13)));
+    triggerRoadMotion(dx, dy, duration);
+    setRoadPos(next);
+  }, [roadPos, triggerRoadMotion]);
 
   const roadInteraction = useCallback(() => {
     const berrySpot = { x: 34, y: 42 };
@@ -397,67 +511,85 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handler);
   }, [moveRoad, phase, roadInteraction]);
 
-  const captureAction = (action: "attack" | "calm" | "ball") => {
-    if (captureWon) return;
-    if (action === "attack") {
-      const damage = partnerId === "metal" ? 11 : 8;
-      const nextHp = Math.max(4, wildHp - damage);
-      setWildHp(nextHp);
-      setCaptureLog(`${partner?.name}使用${partner?.attack}。茸角鼠的动作慢了下来。`);
-      playTone(240);
-      return;
-    }
-    if (action === "calm") {
-      setWildCalm((value) => Math.min(3, value + 1));
-      setCaptureLog(berry ? "你把莓果放在地上，退后一步。茸角鼠慢慢放松了耳朵。" : "茸角鼠仍然很戒备。" );
-      playTone(610);
-      return;
-    }
-    if (balls <= 0) {
-      setCaptureLog("召唤胶囊已经用完了。黎叔的备用包里又滚出了两枚。");
-      setBalls(2);
-      return;
-    }
-    setBalls((value) => value - 1);
-    if (wildHp <= 16 && wildCalm >= 1) {
-      setCaptured(true);
-      setCaptureWon(true);
-      setCaptureLog("胶囊没有强行关闭。茸角鼠轻轻触碰按钮，主动接受了你的邀请。");
-      playTone(840);
-    } else {
-      setCaptureLog(wildHp > 16 ? "茸角鼠还有力气挣脱。先让它停下来。" : "它的体力已经很低，但仍不信任你。试着安抚它。" );
-      playTone(140);
+  const captureAction = async (action: "attack" | "calm" | "ball") => {
+    if (captureWon || battleBusy || !partner) return;
+    setBattleBusy(true);
+    try {
+      if (action === "attack") {
+        const damage = partnerId === "metal" ? 11 : 8;
+        const nextHp = Math.max(4, wildHp - damage);
+        setCaptureLog(`${partner.name}压低身体，准备使出${partner.attack}！`);
+        await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
+        setCaptureLog(`${partner.attack}命中！茸角鼠踉跄后退，动作慢了下来。`);
+        return;
+      }
+      if (action === "calm") {
+        const nextCalm = Math.min(3, wildCalm + 1);
+        setCaptureLog("你没有逼近，而是把香甜莓果轻轻放到了地上。");
+        await animateBattleFx({ skill: "安抚 · 香甜莓果", kind: "calm", attacker: "trainer", target: "enemy", value: "戒备 ↓", positive: true }, () => setWildCalm(nextCalm));
+        setCaptureLog(berry ? "茸角鼠嗅了嗅莓果，耳朵慢慢放松下来。" : "茸角鼠仍然很戒备。");
+        return;
+      }
+      if (balls <= 0) {
+        setCaptureLog("召唤胶囊已经用完了。黎叔的备用包里又滚出了两枚。");
+        setBalls(2);
+        return;
+      }
+      const success = wildHp <= 16 && wildCalm >= 1;
+      setCaptureLog("召唤胶囊划出一道弧光，落在茸角鼠面前……");
+      await animateBattleFx({ skill: "召唤胶囊", kind: "capsule", attacker: "trainer", target: "enemy", value: success ? "灵契成立" : "挣脱！", positive: success }, () => {
+        setBalls((value) => value - 1);
+        if (success) {
+          setCaptured(true);
+          setCaptureWon(true);
+        }
+      });
+      setCaptureLog(success ? "胶囊没有强行关闭。茸角鼠主动触碰按钮，接受了你的邀请。" : wildHp > 16 ? "茸角鼠还有力气挣脱。先让它停下来。" : "它的体力已经很低，但仍不信任你。试着安抚它。");
+    } finally {
+      setBattleBusy(false);
     }
   };
 
-  const examAction = (action: "attack" | "support") => {
-    if (examWon || !partner) return;
-    if (action === "support") {
-      if (partnerId === "leaf" || partnerId === "tide") {
-        setExamHp((value) => Math.min(partner.hp, value + 10));
-        setExamLog(`${partner.name}使用${partner.support}，恢复了体力。银羽雀的风刃擦过护幕。`);
-      } else {
-        setExamGuard(true);
-        setExamLog(`${partner.name}使用${partner.support}，下一次受到的伤害减半。`);
+  const examAction = async (action: "attack" | "support") => {
+    if (examWon || battleBusy || !partner) return;
+    setBattleBusy(true);
+    try {
+      if (action === "support") {
+        const isGuard = partnerId === "metal";
+        setExamLog(`${partner.name}使出${partner.support}，银羽雀正在寻找反击角度。`);
+        await animateBattleFx({ skill: partner.support, kind: isGuard ? "guard" : "heal", attacker: "ally", target: "ally", value: isGuard ? "伤害减半" : "HP +10", positive: true }, () => {
+          if (isGuard) setExamGuard(true);
+          else setExamHp((value) => Math.min(partner.hp, value + 10));
+        });
+        const incoming = isGuard ? 3 : 6;
+        setExamLog("银羽雀振翅升空——风刃反击！");
+        await animateBattleFx({ skill: "回旋风刃", kind: "wind", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => {
+          setExamHp((value) => Math.max(8, value - incoming));
+          setExamGuard(false);
+        });
+        setExamLog(isGuard ? `${partner.support}挡住了大半风刃，只受到 ${incoming} 点伤害。` : `${partner.support}稳住了阵脚，风刃造成 ${incoming} 点伤害。`);
+        return;
       }
-      setExamHp((value) => Math.max(8, value - (examGuard ? 3 : 6)));
-      playTone(580);
-      return;
+      const damage = partnerId === "metal" ? 13 : partnerId === "tide" ? 11 : 10;
+      const nextEnemy = Math.max(0, examEnemy - damage);
+      setExamLog(`${partner.name}锁定银羽雀，${partner.attack}即将发动！`);
+      await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${examEnemy - nextEnemy}` }, () => setExamEnemy(nextEnemy));
+      if (nextEnemy === 0) {
+        setExamWon(true);
+        setExamLog(`${partner.name}稳稳停在边线前。银羽雀失去战斗能力——考核通过！`);
+        playTone(820);
+        return;
+      }
+      const incoming = examGuard ? 3 : 7;
+      setExamLog("银羽雀从冲击中翻身，立刻使出回旋风刃！");
+      await animateBattleFx({ skill: "回旋风刃", kind: "wind", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => {
+        setExamGuard(false);
+        setExamHp((value) => Math.max(8, value - incoming));
+      });
+      setExamLog(`${partner.attack}造成 ${damage} 点伤害；银羽雀反击造成 ${incoming} 点伤害。`);
+    } finally {
+      setBattleBusy(false);
     }
-    const damage = partnerId === "metal" ? 13 : partnerId === "tide" ? 11 : 10;
-    const nextEnemy = Math.max(0, examEnemy - damage);
-    setExamEnemy(nextEnemy);
-    if (nextEnemy === 0) {
-      setExamWon(true);
-      setExamLog(`${partner.name}稳稳停在边线前。银羽雀失去战斗能力——考核通过！`);
-      playTone(820);
-      return;
-    }
-    const incoming = examGuard ? 3 : 7;
-    setExamGuard(false);
-    setExamHp((value) => Math.max(8, value - incoming));
-    setExamLog(`${partner.name}使出${partner.attack}！银羽雀反击，造成 ${incoming} 点伤害。`);
-    playTone(260);
   };
 
   const toggleRuptureNode = (node: number) => {
@@ -468,49 +600,55 @@ export default function Home() {
     if (next.length === 3) setToast("三处灵契稳定。广场中央仍有一只宠物无法醒来……");
   };
 
-  const bossAction = (action: "attack" | "protect" | "soothe" | "call") => {
-    if (bossWon || !partner) return;
-    if (action === "call") {
-      if (memories.length < 3) {
-        setBossLog("记忆还不完整。白裂狮听不见你在呼唤谁。");
-        playTone(150);
+  const bossAction = async (action: "attack" | "protect" | "soothe" | "call") => {
+    if (bossWon || battleBusy || !partner) return;
+    setBattleBusy(true);
+    try {
+      if (action === "call") {
+        const ready = memories.length === 3;
+        setBossLog(ready ? `${playerName}没有下令攻击，而是大声呼唤那段记忆里的名字。` : "记忆还不完整。你仍试着穿过黑铃的噪声呼唤它……");
+        await animateBattleFx({ skill: ready ? "真名呼唤 · 白裂狮" : "未完成的呼唤", kind: "call", attacker: "trainer", target: "enemy", value: ready ? "记忆苏醒" : "回应微弱", positive: true }, () => {
+          if (ready) setBossWon(true);
+        });
+        setBossLog(ready ? "“白裂狮——塞其还在等你。” 它身上的灵纹重新亮起，利爪停在了你面前。" : "白裂狮似乎听见了一瞬，但记忆很快又被铃声淹没。");
+        if (ready) playTone(880);
         return;
       }
-      setBossWon(true);
-      setBossLog("“白裂狮——塞其还在等你。” 它身上的灵纹重新亮起，利爪停在了你面前。");
-      playTone(880);
-      return;
-    }
 
-    let incoming = 9;
-    if (action === "attack") {
-      const nextHp = Math.max(18, bossHp - 9);
-      setBossHp(nextHp);
-      setBossLog(nextHp === 18 ? "白裂狮的身体已经到达极限，但黑色铃声仍控制着它。继续攻击无法结束战斗。" : `${partner.name}挡开利爪。白裂狮变得更加狂暴，记忆光点在它身后闪烁。`);
-      incoming = 10;
-      playTone(210);
-    }
-    if (action === "soothe") {
-      setBossLog(`${partner.name}没有攻击，而是守在你身前。白裂狮迟疑了一瞬。`);
-      incoming = 5;
-      playTone(540);
-    }
-    if (action === "protect") {
-      if (memories.length < 3) {
-        const memory = MEMORY_TEXT[memories.length];
-        setMemories((current) => [...current, memory]);
-        setBossLog(`你护住了记忆碎片：${memory}`);
-        incoming = 4;
-        playTone(660 + memories.length * 80);
-      } else {
-        setBossLog("三段记忆已经完整。现在，呼唤它真正的名字。" );
-        incoming = 3;
+      let incoming = 9;
+      if (action === "attack") {
+        const nextHp = Math.max(18, bossHp - 9);
+        incoming = 10;
+        setBossLog(`${partner.name}迎着利爪冲了上去——${partner.attack}！`);
+        await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${bossHp - nextHp}` }, () => setBossHp(nextHp));
+        setBossLog(nextHp === 18 ? "白裂狮已经到达极限，但黑铃仍在强迫它战斗！" : "白裂狮被击退半步，随即在黑铃声中再次扑来！");
       }
+      if (action === "soothe") {
+        incoming = 5;
+        setBossLog(`${partner.name}没有攻击，而是展开${partner.support}守在你身前。`);
+        await animateBattleFx({ skill: partner.support, kind: "guard", attacker: "ally", target: "ally", value: "伤害降低", positive: true });
+      }
+      if (action === "protect") {
+        incoming = memories.length < 3 ? 4 : 3;
+        const memory = memories.length < 3 ? MEMORY_TEXT[memories.length] : null;
+        setBossLog(memory ? "一枚记忆碎片正从黑色裂隙中坠落——护住它！" : "三段记忆已经完整，继续守住它们！");
+        await animateBattleFx({ skill: memory ? "守护记忆碎片" : "维系完整记忆", kind: "memory", attacker: "trainer", target: "ally", value: memory ? `记忆 ${memories.length + 1}/3` : "记忆稳定", positive: true }, () => {
+          if (memory) setMemories((current) => [...current, memory]);
+        });
+        setBossLog(memory ? `你护住了记忆碎片：${memory}` : "三段记忆已经完整。现在，呼唤它真正的名字。");
+      }
+
+      setBossLog((current) => `${current} 白裂狮撕开黑雾，发动裂痕爪！`);
+      await animateBattleFx({ skill: "裂痕爪", kind: "claw", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => {
+        setBossPlayerHp((value) => {
+          const next = value - incoming;
+          return next <= 0 ? 22 : next;
+        });
+      });
+      setBossLog((current) => `${current.replace(" 白裂狮撕开黑雾，发动裂痕爪！", "")} 你承受了 ${incoming} 点冲击。`);
+    } finally {
+      setBattleBusy(false);
     }
-    setBossPlayerHp((value) => {
-      const next = value - incoming;
-      return next <= 0 ? 22 : next;
-    });
   };
 
   const chapterLabel = useMemo(() => {
@@ -614,15 +752,19 @@ export default function Home() {
           <div className="field-world" onPointerDown={(event) => {
             if ((event.target as HTMLElement).closest("button")) return;
             const box = event.currentTarget.getBoundingClientRect();
-            setRoadPos({ x: ((event.clientX - box.left) / box.width) * 100, y: ((event.clientY - box.top) / box.height) * 100 });
+            travelRoadTo({ x: ((event.clientX - box.left) / box.width) * 100, y: ((event.clientY - box.top) / box.height) * 100 });
           }}>
             <div className="field-skyline"><i /><i /><i /></div>
             <div className="river" /><div className="stone-path" />
             <div className="tree-line tree-line-back">{Array.from({ length: 11 }).map((_, index) => <i key={index} />)}</div>
             <div className="tree-line tree-line-front">{Array.from({ length: 7 }).map((_, index) => <i key={index} />)}</div>
-            <button type="button" className={`map-object berry-object${berry ? " collected" : ""}`} style={{ left: "34%", top: "42%" }} onClick={(event) => { event.stopPropagation(); setRoadPos({ x: 34, y: 42 }); }} aria-label="莓果丛"><span>✦</span></button>
-            <button type="button" className="map-object wild-object" style={{ left: "75%", top: "55%" }} onClick={(event) => { event.stopPropagation(); setRoadPos({ x: 75, y: 55 }); }} aria-label="被困的茸角鼠"><PetSprite id="wild" size="sm" /><span>!</span></button>
-            <div className="player-party" style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}><Character name={playerName} small /><PetSprite id={partner.id} size="sm" /></div>
+            <button type="button" className={`map-object berry-object${berry ? " collected" : ""}`} style={{ left: "34%", top: "42%" }} onClick={(event) => { event.stopPropagation(); travelRoadTo({ x: 34, y: 42 }); }} aria-label="莓果丛"><span>✦</span></button>
+            <button type="button" className="map-object wild-object" style={{ left: "75%", top: "55%" }} onClick={(event) => { event.stopPropagation(); travelRoadTo({ x: 75, y: 55 }); }} aria-label="被困的茸角鼠"><PetSprite id="wild" size="sm" /><span>!</span></button>
+            <div className={`player-party facing-${roadFacing}${roadMoving ? " is-walking" : ""} step-${roadStep % 2}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%`, transitionDuration: `${roadMoveDuration}ms` }}>
+              <i className="step-dust" aria-hidden="true" />
+              <Character name={playerName} small />
+              <PetSprite id={partner.id} size="sm" />
+            </div>
             <div className="city-gate-marker"><span>彩虹城</span><i>›</i></div>
           </div>
           <div className="field-toast"><span>{berry ? "莓" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
@@ -631,21 +773,22 @@ export default function Home() {
       )}
 
       {phase === "capture" && partner && (
-        <section className="battle-screen capture-battle">
+        <section className={`battle-screen capture-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop field-battle-bg"><i /><i /><i /></div>
+          <BattleEffects fx={battleFx} />
           <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>第一次邀请</h2><p>被困的宠物不会因为获救就立刻相信你。</p></div>
           <div className="enemy-side">
             <div className="combatant-info"><span><b>茸角鼠</b><small>猛兽系 · Lv.4</small></span><em>{wildHp} / 32</em><Meter value={wildHp} max={32} /></div>
-            <PetSprite id="wild" size="xl" />
+            <div className={battleActorClass("enemy", battleFx)}><PetSprite id="wild" size="xl" /></div>
             <div className="calm-indicator"><span>戒备</span><Meter value={wildCalm} max={3} kind="calm" /></div>
           </div>
-          <div className="ally-side"><PetSprite id={partner.id} size="xl" /><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.5</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.5</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
           <div className="battle-command">
-            <div className="battle-log"><span>行动记录</span><p>{captureLog}</p></div>
+            <div className="battle-log"><span>行动记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "演出中" : "等待指令"}</i><p>{captureLog}</p></div>
             {!captureWon ? <div className="command-grid">
-              <button type="button" onClick={() => captureAction("attack")}><span>攻击</span><b>{partner.attack}</b><small>降低体力</small></button>
-              <button type="button" onClick={() => captureAction("calm")}><span>安抚</span><b>放下莓果</b><small>降低戒备</small></button>
-              <button type="button" className="ball-command" onClick={() => captureAction("ball")}><span>道具 · {balls}</span><b>召唤胶囊</b><small>邀请同行</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => captureAction("attack")}><span>攻击</span><b>{partner.attack}</b><small>降低体力</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => captureAction("calm")}><span>安抚</span><b>放下莓果</b><small>降低戒备</small></button>
+              <button type="button" disabled={battleBusy} className="ball-command" onClick={() => captureAction("ball")}><span>道具 · {balls}</span><b>召唤胶囊</b><small>邀请同行</small></button>
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("city")}><span>带着新伙伴进城</span><b>›</b></button>}
           </div>
         </section>
@@ -662,16 +805,17 @@ export default function Home() {
       )}
 
       {phase === "exam" && partner && (
-        <section className="battle-screen exam-battle">
+        <section className={`battle-screen exam-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop arena-bg"><i /><i /><i /><i /></div>
+          <BattleEffects fx={battleFx} />
           <div className="battle-heading light"><small>RAINBOW ACADEMY · ENTRY TEST</small><h2>新生考核</h2><p>击败诺亚的银羽雀，取得临时训练师徽章。</p></div>
-          <div className="enemy-side"><div className="combatant-info"><span><b>银羽雀</b><small>飞行系 · Lv.6</small></span><em>{examEnemy} / 48</em><Meter value={examEnemy} max={48} /></div><PetSprite id="bird" size="xl" /><div className="trainer-label"><Character name="诺亚" variant="noah" small /><span>诺亚</span></div></div>
-          <div className="ally-side"><PetSprite id={partner.id} size="xl" /><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.6</small></span><em>{examHp} / {partner.hp}</em><Meter value={examHp} max={partner.hp} /></div><div className="trainer-label"><Character name={playerName} variant="player" small /><span>{playerName}</span></div></div>
+          <div className="enemy-side"><div className="combatant-info"><span><b>银羽雀</b><small>飞行系 · Lv.6</small></span><em>{examEnemy} / 48</em><Meter value={examEnemy} max={48} /></div><div className={battleActorClass("enemy", battleFx)}><PetSprite id="bird" size="xl" /></div><div className="trainer-label"><Character name="诺亚" variant="noah" small /><span>诺亚</span></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.6</small></span><em>{examHp} / {partner.hp}</em><Meter value={examHp} max={partner.hp} /></div><div className="trainer-label"><Character name={playerName} variant="player" small /><span>{playerName}</span></div></div>
           <div className="battle-command">
-            <div className="battle-log"><span>裁判记录</span><p>{examLog}</p></div>
+            <div className="battle-log"><span>裁判记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : "等待指令"}</i><p>{examLog}</p></div>
             {!examWon ? <div className="command-grid two">
-              <button type="button" onClick={() => examAction("attack")}><span>技能 01</span><b>{partner.attack}</b><small>稳定伤害</small></button>
-              <button type="button" onClick={() => examAction("support")}><span>技能 02</span><b>{partner.support}</b><small>{partnerId === "metal" ? "减轻伤害" : "恢复体力"}</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => examAction("attack")}><span>技能 01</span><b>{partner.attack}</b><small>稳定伤害</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => examAction("support")}><span>技能 02</span><b>{partner.support}</b><small>{partnerId === "metal" ? "减轻伤害" : "恢复体力"}</small></button>
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("festival")}><span>参加黄金庆典</span><b>›</b></button>}
           </div>
         </section>
@@ -700,19 +844,20 @@ export default function Home() {
       )}
 
       {phase === "boss" && partner && (
-        <section className="battle-screen boss-battle">
+        <section className={`battle-screen boss-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop boss-bg"><i /><i /><i /></div>
+          <BattleEffects fx={battleFx} />
           <div className="battle-heading light"><small>AWAKENING BATTLE · NOT A HUNT</small><h2>被遗忘的名字</h2><p>保护浮现的记忆。不要让白裂狮在狂乱中耗尽自己。</p></div>
-          <div className="enemy-side guardian-side"><div className="combatant-info danger"><span><b>白裂狮</b><small>金属系 · 灵契断裂</small></span><em>{bossHp} / 86</em><Meter value={bossHp} max={86} /></div><PetSprite id="guardian" size="xl" glitched={!bossWon} /><div className="black-bell">◆<span>黑铃共鸣</span></div></div>
-          <div className="ally-side"><PetSprite id={partner.id} size="xl" /><div className="combatant-info"><span><b>{partner.name}</b><small>未登记灵契</small></span><em>{bossPlayerHp} / 68</em><Meter value={bossPlayerHp} max={68} /></div></div>
+          <div className="enemy-side guardian-side"><div className="combatant-info danger"><span><b>白裂狮</b><small>金属系 · 灵契断裂</small></span><em>{bossHp} / 86</em><Meter value={bossHp} max={86} /></div><div className={battleActorClass("enemy", battleFx)}><PetSprite id="guardian" size="xl" glitched={!bossWon} /></div><div className="black-bell">◆<span>黑铃共鸣</span></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>未登记灵契</small></span><em>{bossPlayerHp} / 68</em><Meter value={bossPlayerHp} max={68} /></div></div>
           <div className="memory-ribbon">{[0, 1, 2].map((slot) => <div key={slot} className={memories[slot] ? "found" : ""}><span>{slot + 1}</span><p>{memories[slot] ?? "记忆尚未浮现"}</p></div>)}</div>
           <div className="battle-command boss-command">
-            <div className="battle-log"><span>灵契回声</span><p>{bossLog}</p></div>
+            <div className="battle-log"><span>灵契回声</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "共鸣进行中" : "等待指令"}</i><p>{bossLog}</p></div>
             {!bossWon ? <div className="command-grid four">
-              <button type="button" onClick={() => bossAction("attack")}><span>战斗</span><b>{partner.attack}</b><small>挡开攻击</small></button>
-              <button type="button" className="memory-command" onClick={() => bossAction("protect")}><span>核心</span><b>守护记忆</b><small>{memories.length} / 3</small></button>
-              <button type="button" onClick={() => bossAction("soothe")}><span>协力</span><b>{partner.support}</b><small>减少伤害</small></button>
-              <button type="button" className={memories.length === 3 ? "call-ready" : ""} onClick={() => bossAction("call")}><span>唤灵</span><b>呼唤名字</b><small>{memories.length === 3 ? "可以使用" : "需要完整记忆"}</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => bossAction("attack")}><span>战斗</span><b>{partner.attack}</b><small>挡开攻击</small></button>
+              <button type="button" disabled={battleBusy} className="memory-command" onClick={() => bossAction("protect")}><span>核心</span><b>守护记忆</b><small>{memories.length} / 3</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => bossAction("soothe")}><span>协力</span><b>{partner.support}</b><small>减少伤害</small></button>
+              <button type="button" disabled={battleBusy} className={memories.length === 3 ? "call-ready" : ""} onClick={() => bossAction("call")}><span>唤灵</span><b>呼唤名字</b><small>{memories.length === 3 ? "可以使用" : "需要完整记忆"}</small></button>
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("aftermath")}><span>赶往彩虹神殿</span><b>›</b></button>}
           </div>
         </section>
