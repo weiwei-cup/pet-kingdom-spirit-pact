@@ -24,6 +24,7 @@ type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "a
 type Position = { x: number; y: number };
 type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
+type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
 type SaveData = { phase: Phase; playerName: string; partnerId: PartnerId | null; captured: boolean };
 
 type Partner = {
@@ -69,6 +70,20 @@ type RouteEncounter = {
   kind: string;
   level: number;
   maxHp: number;
+};
+
+type ExplorationMapDefinition = {
+  id: ExplorationPhase;
+  image: string;
+  name: string;
+  start: Position;
+  interaction: Position;
+  walkable: MapRect[];
+  blocked?: MapRect[];
+  grass?: MapRect[];
+  missionTitle: string;
+  missionText: string;
+  collisionText: string;
 };
 
 const SAVE_KEY = "pet-kingdom-spirit-pact-prologue-v1";
@@ -135,13 +150,13 @@ const SCENE_ART: Record<Phase, string> = {
   shelter: "./pixel/shelter-interior.webp?v=2",
   road: "./pixel/route-map-v2.webp?v=3",
   capture: "./pixel/route-map-v2.webp?v=3",
-  city: "./pixel/rainbow-plaza.webp?v=2",
+  city: "./pixel/map-rainbow-city.webp?v=4",
   exam: "./pixel/academy-arena.webp?v=2",
-  festival: "./pixel/rainbow-plaza.webp?v=2",
-  rupture: "./pixel/rainbow-plaza.webp?v=2",
+  festival: "./pixel/map-golden-festival.webp?v=4",
+  rupture: "./pixel/map-ruptured-plaza.webp?v=4",
   boss: "./pixel/spirit-sanctum.webp?v=2",
-  aftermath: "./pixel/spirit-sanctum.webp?v=2",
-  ending: "./pixel/title-landscape.webp?v=2",
+  aftermath: "./pixel/map-spirit-temple.webp?v=4",
+  ending: "./pixel/map-east-highland.webp?v=4",
 };
 
 const FESTIVAL_HEROES: Array<{ name: string; variant: CharacterVariant }> = [
@@ -189,35 +204,148 @@ const ROAD_STEP = { x: 100 / 48, y: 100 / 32 };
 const ROAD_START: Position = { x: 16.7, y: 84.4 };
 const CITY_GATE: Position = { x: 84.5, y: 15.5 };
 
-const GRASS_ZONES: MapRect[] = [
-  { x1: 31, y1: 43, x2: 45, y2: 61 },
-  { x1: 58, y1: 22, x2: 75, y2: 43 },
-  { x1: 56, y1: 60, x2: 71, y2: 75 },
-];
+const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
+  road: {
+    id: "road",
+    image: SCENE_ART.road,
+    name: "临虹村外 · 青崖水道",
+    start: ROAD_START,
+    interaction: CITY_GATE,
+    missionTitle: "第一次野外捕捉",
+    missionText: "沿真实道路穿过高草，再从中央石阶绕向东北城门。",
+    collisionText: "这里是河面、峭壁或装饰障碍，不能通行。",
+    grass: [
+      { x1: 31, y1: 42, x2: 47, y2: 61 },
+      { x1: 58, y1: 22, x2: 74, y2: 43 },
+      { x1: 56, y1: 60, x2: 72, y2: 75 },
+    ],
+    walkable: [
+      { x1: 4, y1: 74, x2: 31, y2: 96 },
+      { x1: 20, y1: 88, x2: 51, y2: 96 },
+      { x1: 42, y1: 69, x2: 51, y2: 94 },
+      { x1: 39, y1: 63, x2: 72, y2: 81 },
+      { x1: 32, y1: 42, x2: 73, y2: 72 },
+      { x1: 49, y1: 33, x2: 87, y2: 63 },
+      { x1: 77, y1: 14, x2: 91, y2: 62 },
+      { x1: 24, y1: 17, x2: 91, y2: 31 },
+      { x1: 19, y1: 22, x2: 30, y2: 66 },
+    ],
+    blocked: [
+      { x1: 47, y1: 48, x2: 52, y2: 57 },
+      { x1: 57, y1: 43, x2: 61, y2: 50 },
+      { x1: 72, y1: 64, x2: 77, y2: 73 },
+    ],
+  },
+  city: {
+    id: "city",
+    image: SCENE_ART.city,
+    name: "彩虹城 · 学院区",
+    start: { x: 50, y: 91 },
+    interaction: { x: 50, y: 20 },
+    missionTitle: "拜访彩虹学院",
+    missionText: "沿中央大道绕过星泉，在学院门前与诺亚交谈。",
+    collisionText: "水渠、花坛、雕像和建筑都不能穿过。",
+    walkable: [
+      { x1: 44, y1: 68, x2: 56, y2: 97 },
+      { x1: 35, y1: 57, x2: 65, y2: 81 },
+      { x1: 22, y1: 31, x2: 78, y2: 70 },
+      { x1: 7, y1: 43, x2: 93, y2: 57 },
+      { x1: 44, y1: 17, x2: 56, y2: 42 },
+      { x1: 22, y1: 17, x2: 78, y2: 31 },
+    ],
+    blocked: [
+      { x1: 42, y1: 40, x2: 58, y2: 58 },
+    ],
+  },
+  festival: {
+    id: "festival",
+    image: SCENE_ART.festival,
+    name: "黄金庆典 · 万灵广场",
+    start: { x: 50, y: 91 },
+    interaction: { x: 50, y: 51 },
+    missionTitle: "走向庆典共鸣环",
+    missionText: "穿过灯市，前往中央彩虹纹章与历代训练师会合。",
+    collisionText: "摊位、花台、灯架和舞台边缘不能穿过。",
+    walkable: [
+      { x1: 44, y1: 75, x2: 56, y2: 96 },
+      { x1: 18, y1: 25, x2: 82, y2: 86 },
+      { x1: 5, y1: 44, x2: 95, y2: 57 },
+      { x1: 41, y1: 19, x2: 59, y2: 33 },
+    ],
+    blocked: [
+      { x1: 34, y1: 4, x2: 66, y2: 23 },
+      { x1: 19, y1: 24, x2: 30, y2: 41 },
+      { x1: 70, y1: 24, x2: 81, y2: 41 },
+      { x1: 20, y1: 60, x2: 31, y2: 78 },
+      { x1: 69, y1: 60, x2: 80, y2: 78 },
+    ],
+  },
+  rupture: {
+    id: "rupture",
+    image: SCENE_ART.rupture,
+    name: "异变城区 · 断契浮台",
+    start: { x: 11, y: 88 },
+    interaction: { x: 50, y: 13 },
+    missionTitle: "稳定三处灵契节点",
+    missionText: "沿三条安全石路逐一接近发光晶柱，最后前往上方裂隙台。",
+    collisionText: "深渊、断桥、裂缝和坍塌建筑都不能通行。",
+    walkable: [
+      { x1: 5, y1: 75, x2: 27, y2: 96 },
+      { x1: 20, y1: 79, x2: 52, y2: 89 },
+      { x1: 42, y1: 65, x2: 58, y2: 86 },
+      { x1: 45, y1: 20, x2: 56, y2: 71 },
+      { x1: 18, y1: 43, x2: 48, y2: 56 },
+      { x1: 13, y1: 27, x2: 28, y2: 65 },
+      { x1: 52, y1: 43, x2: 84, y2: 56 },
+      { x1: 73, y1: 30, x2: 88, y2: 66 },
+      { x1: 40, y1: 8, x2: 61, y2: 29 },
+    ],
+  },
+  aftermath: {
+    id: "aftermath",
+    image: SCENE_ART.aftermath,
+    name: "万灵神殿 · 月白回廊",
+    start: { x: 50, y: 92 },
+    interaction: { x: 50, y: 11 },
+    missionTitle: "追上安琪儿",
+    missionText: "中央晶核阻断了直路，从左右回廊绕行至记忆祭台。",
+    collisionText: "虚空、能量渠、立柱、雕像和破碎晶核不能穿过。",
+    walkable: [
+      { x1: 43, y1: 62, x2: 57, y2: 97 },
+      { x1: 20, y1: 55, x2: 80, y2: 70 },
+      { x1: 18, y1: 28, x2: 39, y2: 68 },
+      { x1: 61, y1: 28, x2: 82, y2: 68 },
+      { x1: 20, y1: 17, x2: 80, y2: 34 },
+      { x1: 44, y1: 8, x2: 56, y2: 30 },
+    ],
+    blocked: [
+      { x1: 40, y1: 35, x2: 60, y2: 60 },
+      { x1: 24, y1: 47, x2: 29, y2: 60 },
+      { x1: 71, y1: 47, x2: 76, y2: 60 },
+      { x1: 34, y1: 24, x2: 39, y2: 37 },
+      { x1: 61, y1: 24, x2: 66, y2: 37 },
+    ],
+  },
+};
 
-const WALKABLE_ZONES: MapRect[] = [
-  { x1: 4, y1: 72, x2: 34, y2: 97 },
-  { x1: 14, y1: 53, x2: 29, y2: 82 },
-  { x1: 18, y1: 50, x2: 28, y2: 66 },
-  { x1: 25, y1: 40, x2: 51, y2: 77 },
-  { x1: 36, y1: 32, x2: 62, y2: 72 },
-  { x1: 39, y1: 66, x2: 62, y2: 92 },
-  { x1: 50, y1: 42, x2: 85, y2: 76 },
-  { x1: 57, y1: 55, x2: 92, y2: 88 },
-  { x1: 76, y1: 13, x2: 91, y2: 62 },
-  { x1: 18, y1: 14, x2: 91, y2: 31 },
+const RUPTURE_NODE_POSITIONS: Position[] = [
+  { x: 19, y: 36 },
+  { x: 81, y: 38 },
+  { x: 50, y: 74 },
 ];
 
 function inMapRect(position: Position, rect: MapRect) {
   return position.x >= rect.x1 && position.x <= rect.x2 && position.y >= rect.y1 && position.y <= rect.y2;
 }
 
-function isRoadWalkable(position: Position) {
-  return WALKABLE_ZONES.some((zone) => inMapRect(position, zone));
+function isMapWalkable(map: ExplorationMapDefinition, position: Position) {
+  const onGround = map.walkable.some((zone) => inMapRect(position, zone));
+  const insideObstacle = map.blocked?.some((zone) => inMapRect(position, zone)) ?? false;
+  return onGround && !insideObstacle;
 }
 
-function isGrassTile(position: Position) {
-  return GRASS_ZONES.some((zone) => inMapRect(position, zone));
+function isGrassTile(map: ExplorationMapDefinition, position: Position) {
+  return map.grass?.some((zone) => inMapRect(position, zone)) ?? false;
 }
 
 function distance(a: Position, b: Position) {
@@ -351,6 +479,73 @@ function DPad({ onMove, onInteract }: { onMove: (dx: number, dy: number) => void
   );
 }
 
+function ExplorationScene({
+  map,
+  mapCamera,
+  fieldViewportRef,
+  partner,
+  roadPos,
+  roadFacing,
+  roadMoving,
+  roadStep,
+  roadBumped,
+  roadInGrass,
+  toast,
+  encounterPending,
+  missionTitle,
+  missionText,
+  missionItems,
+  markers,
+  onMove,
+  onInteract,
+}: {
+  map: ExplorationMapDefinition;
+  mapCamera: { width: number; height: number; x: number; y: number };
+  fieldViewportRef: React.RefObject<HTMLDivElement | null>;
+  partner: Partner;
+  roadPos: Position;
+  roadFacing: RoadFacing;
+  roadMoving: boolean;
+  roadStep: number;
+  roadBumped: boolean;
+  roadInGrass: boolean;
+  toast: string;
+  encounterPending: boolean;
+  missionTitle: string;
+  missionText: string;
+  missionItems: Array<{ label: string; done?: boolean }>;
+  markers?: React.ReactNode;
+  onMove: (dx: number, dy: number) => void;
+  onInteract: () => void;
+}) {
+  return (
+    <section className={`field-screen area-${map.id}`}>
+      <div className="mission-card">
+        <small>{map.name}</small><h3>{missionTitle}</h3><p>{missionText}</p>
+        <div className="mission-items">
+          {missionItems.map((item) => <span key={item.label} className={item.done ? "done" : ""}>◇ {item.label}</span>)}
+        </div>
+      </div>
+      <div className="field-world" ref={fieldViewportRef} aria-label={`${map.name}可探索地图`}>
+        <div className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
+          <img className="rpg-map-image" src={map.image} alt={map.name} draggable={false} />
+          {markers}
+          <div className={`map-player facing-${roadFacing}${roadMoving ? " is-walking" : ""}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}>
+            <i className="map-player-shadow" aria-hidden="true" />
+            <MapPlayerSprite facing={roadFacing} moving={roadMoving} step={roadStep} />
+            <div className="map-companion" aria-hidden="true"><PetSprite id={partner.id} size="sm" /></div>
+            {roadInGrass && <i className="grass-foreground" aria-hidden="true" />}
+          </div>
+        </div>
+      </div>
+      {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
+      <div className="field-toast"><span>{roadInGrass ? "草" : map.id === "rupture" ? "契" : map.id === "aftermath" ? "忆" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
+      <DPad onMove={onMove} onInteract={onInteract} />
+      <span className="map-control-hint">WASD / 方向键移动 · E 互动</span>
+    </section>
+  );
+}
+
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("title");
   const [playerName, setPlayerName] = useState("小澈");
@@ -384,6 +579,9 @@ export default function Home() {
   const [balls, setBalls] = useState(3);
   const [captureWon, setCaptureWon] = useState(false);
   const [captureLog, setCaptureLog] = useState("茸角鼠被荆棘缠住，正警惕地望着你。");
+  const [cityDialogueOpen, setCityDialogueOpen] = useState(false);
+  const [festivalDialogueOpen, setFestivalDialogueOpen] = useState(false);
+  const [aftermathDialogueOpen, setAftermathDialogueOpen] = useState(false);
 
   const [examHp, setExamHp] = useState(62);
   const [examEnemy, setExamEnemy] = useState(48);
@@ -400,6 +598,9 @@ export default function Home() {
 
   const partner = partnerId ? PARTNERS[partnerId] : null;
   const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
+  const activeMap = (["road", "city", "festival", "rupture", "aftermath"] as Phase[]).includes(phase)
+    ? EXPLORATION_MAPS[phase as ExplorationPhase]
+    : null;
 
   const mapCamera = useMemo(() => {
     const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
@@ -443,14 +644,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (phase !== "road" || !fieldViewportRef.current) return;
+    if (!activeMap || !fieldViewportRef.current) return;
     const viewport = fieldViewportRef.current;
     const updateSize = () => setFieldSize({ width: viewport.clientWidth, height: viewport.clientHeight });
     updateSize();
     const observer = new ResizeObserver(updateSize);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [phase]);
+  }, [activeMap, phase]);
 
   const playTone = useCallback((pitch = 440) => {
     if (!soundOn || typeof window === "undefined") return;
@@ -492,10 +693,25 @@ export default function Home() {
     await wait(90);
   }, [playTone]);
 
+  const prepareExplorationMap = useCallback((next: Phase) => {
+    if (!(next in EXPLORATION_MAPS) || next === "road") return;
+    const map = EXPLORATION_MAPS[next as ExplorationPhase];
+    setRoadPos(map.start);
+    setRoadFacing("up");
+    setRoadMoving(false);
+    setRoadBumped(false);
+    setRoadInGrass(false);
+    setToast(map.missionText);
+  }, []);
+
   const go = useCallback((next: Phase) => {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
+    prepareExplorationMap(next);
+    if (next === "city") setCityDialogueOpen(false);
+    if (next === "festival") setFestivalDialogueOpen(false);
+    if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
-  }, [playTone]);
+  }, [playTone, prepareExplorationMap]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -520,6 +736,9 @@ export default function Home() {
     setBalls(3);
     setCaptureWon(false);
     setCaptureLog("高草突然晃动，一只茸角鼠警惕地跳了出来！");
+    setCityDialogueOpen(false);
+    setFestivalDialogueOpen(false);
+    setAftermathDialogueOpen(false);
     setToast("沿道路前进，在高草里寻找野生宠物");
     setExamHp(62);
     setExamEnemy(48);
@@ -542,7 +761,9 @@ export default function Home() {
       setPartnerId(saved.partnerId);
       setExamHp(saved.partnerId ? PARTNERS[saved.partnerId].hp : 62);
       setCaptured(Boolean(saved.captured));
-      setPhase(saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase);
+      const restoredPhase = saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase;
+      prepareExplorationMap(restoredPhase);
+      setPhase(restoredPhase);
     } catch {
       newGame();
     }
@@ -577,7 +798,7 @@ export default function Home() {
   }, [playTone]);
 
   const moveRoad = useCallback((dx: number, dy: number) => {
-    if (encounterPending) return;
+    if (encounterPending || !activeMap) return;
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
     else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
 
@@ -585,10 +806,10 @@ export default function Home() {
       x: roadPos.x + Math.sign(dx) * ROAD_STEP.x,
       y: roadPos.y + Math.sign(dy) * ROAD_STEP.y,
     };
-    if (!isRoadWalkable(next)) {
+    if (!isMapWalkable(activeMap, next)) {
       setRoadMoving(false);
       setRoadBumped(true);
-      setToast("前方是岩壁或水面，换一条路试试。");
+      setToast(activeMap.collisionText);
       playTone(115);
       if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
       roadBumpTimer.current = window.setTimeout(() => setRoadBumped(false), 190);
@@ -597,11 +818,12 @@ export default function Home() {
 
     triggerRoadMotion(dx, dy, 125);
     setRoadPos(next);
-    const inGrass = isGrassTile(next);
+    const inGrass = isGrassTile(activeMap, next);
     setRoadInGrass(inGrass);
     if (!inGrass) {
       grassStepsRef.current = 0;
-      setToast(captured ? "沿道路向东北走，到彩虹城门前按 E。" : "高草里有野生宠物活动的痕迹。");
+      if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
+      else setToast(activeMap.missionText);
       return;
     }
     if (captured) {
@@ -617,10 +839,11 @@ export default function Home() {
       grassStepsRef.current = 0;
       beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
     }
-  }, [beginRouteEncounter, captured, encounterPending, playTone, roadPos, triggerRoadMotion]);
+  }, [activeMap, beginRouteEncounter, captured, encounterPending, phase, playTone, roadPos, triggerRoadMotion]);
 
-  const roadInteraction = useCallback(() => {
-    if (distance(roadPos, CITY_GATE) < 8) {
+  const exploreInteraction = useCallback(() => {
+    if (!activeMap) return;
+    if (phase === "road" && distance(roadPos, activeMap.interaction) < 8) {
       if (!captured) {
         setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
         playTone(150);
@@ -630,8 +853,42 @@ export default function Home() {
       go("city");
       return;
     }
-    setToast(captured ? "东北方的彩虹城门正在闪光，靠近后按 E。" : "进入金色高草移动，野生宠物会随机出现。");
-  }, [captured, go, playTone, roadPos]);
+    if (phase === "city" && distance(roadPos, activeMap.interaction) < 8) {
+      setCityDialogueOpen(true);
+      playTone(650);
+      return;
+    }
+    if (phase === "festival" && distance(roadPos, activeMap.interaction) < 10) {
+      setFestivalDialogueOpen(true);
+      playTone(720);
+      return;
+    }
+    if (phase === "rupture") {
+      const node = RUPTURE_NODE_POSITIONS.findIndex((position, index) => !ruptureNodes.includes(index) && distance(roadPos, position) < 8);
+      if (node >= 0) {
+        const next = [...ruptureNodes, node];
+        setRuptureNodes(next);
+        playTone(300 + node * 120);
+        setToast(next.length === 3 ? "三处灵契已稳定。沿中央石路前往上方裂隙台。" : `第 ${next.length} 处灵契已稳定，继续寻找其余晶柱。`);
+        return;
+      }
+      if (ruptureNodes.length === 3 && distance(roadPos, activeMap.interaction) < 9) {
+        go("boss");
+        return;
+      }
+    }
+    if (phase === "aftermath" && distance(roadPos, activeMap.interaction) < 9) {
+      setAftermathDialogueOpen(true);
+      playTone(620);
+      return;
+    }
+
+    if (phase === "road") setToast(captured ? "沿可见道路前往东北城门，靠近后按 E。" : "进入金色高草移动，野生宠物会随机出现。");
+    if (phase === "city") setToast("学院门位于地图上方；星泉、水渠和花坛均不可穿越。");
+    if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
+    if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
+    if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
+  }, [activeMap, captured, go, phase, playTone, roadPos, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -643,7 +900,7 @@ export default function Home() {
   }, [encounterPending, go]);
 
   useEffect(() => {
-    if (phase !== "road") return;
+    if (!activeMap) return;
     const handler = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", "e"].includes(key)) event.preventDefault();
@@ -651,11 +908,11 @@ export default function Home() {
       if (key === "arrowdown" || key === "s") moveRoad(0, 1);
       if (key === "arrowleft" || key === "a") moveRoad(-1, 0);
       if (key === "arrowright" || key === "d") moveRoad(1, 0);
-      if (key === "e") roadInteraction();
+      if (key === "e") exploreInteraction();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [moveRoad, phase, roadInteraction]);
+  }, [activeMap, exploreInteraction, moveRoad]);
 
   const captureAction = async (action: "attack" | "calm" | "ball") => {
     if (captureWon || battleBusy || !partner) return;
@@ -737,14 +994,6 @@ export default function Home() {
     } finally {
       setBattleBusy(false);
     }
-  };
-
-  const toggleRuptureNode = (node: number) => {
-    if (ruptureNodes.includes(node)) return;
-    const next = [...ruptureNodes, node];
-    setRuptureNodes(next);
-    playTone(300 + node * 120);
-    if (next.length === 3) setToast("三处灵契稳定。广场中央仍有一只宠物无法醒来……");
   };
 
   const bossAction = async (action: "attack" | "protect" | "soothe" | "call") => {
@@ -890,35 +1139,63 @@ export default function Home() {
         </section>
       )}
 
-      {phase === "road" && partner && (
-        <section className="field-screen">
-          <div className="mission-card">
-            <small>当前目标</small><h3>{captured ? "前往彩虹城" : "第一次野外捕捉"}</h3>
-            <p>{captured ? "沿道路向东北前进，在城门标记前按 E。" : "进入金色高草移动，遭遇并捕捉一只野生宠物。"}</p>
-            <div className="mission-items">
-              <span className={captured ? "done" : ""}>◇ 在高草中遭遇宠物</span>
-              <span className={captured ? "done" : ""}>◇ 完成一次捕捉</span>
-              <span>◇ 抵达东北方城门</span>
-            </div>
-          </div>
-          <div className="field-world" ref={fieldViewportRef} aria-label="临虹村外可探索地图">
-            <div className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
-              <img className="rpg-map-image" src={SCENE_ART.road} alt="临虹村外通往彩虹城的草原路线" draggable={false} />
-              <button type="button" className={`city-gate-marker${captured ? " gate-ready" : ""}`} style={{ left: `${CITY_GATE.x}%`, top: `${CITY_GATE.y}%` }} onClick={roadInteraction} aria-label="进入彩虹城">
-                <span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i>
-              </button>
-              <div className={`map-player facing-${roadFacing}${roadMoving ? " is-walking" : ""}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}>
-                <i className="map-player-shadow" aria-hidden="true" />
-                <MapPlayerSprite facing={roadFacing} moving={roadMoving} step={roadStep} />
-                <div className="map-companion" aria-hidden="true"><PetSprite id={partner.id} size="sm" /></div>
-                {roadInGrass && <i className="grass-foreground" aria-hidden="true" />}
-              </div>
-            </div>
-          </div>
-          {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
-          <div className="field-toast"><span>{roadInGrass ? "草" : captured ? "城" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
-          <DPad onMove={moveRoad} onInteract={roadInteraction} />
-        </section>
+      {activeMap && partner && (
+        <ExplorationScene
+          map={activeMap}
+          mapCamera={mapCamera}
+          fieldViewportRef={fieldViewportRef}
+          partner={partner}
+          roadPos={roadPos}
+          roadFacing={roadFacing}
+          roadMoving={roadMoving}
+          roadStep={roadStep}
+          roadBumped={roadBumped}
+          roadInGrass={roadInGrass}
+          toast={toast}
+          encounterPending={encounterPending}
+          missionTitle={phase === "road" && captured ? "前往彩虹城" : activeMap.missionTitle}
+          missionText={phase === "road" && captured ? "从下方营地沿道路向东，经中央石阶绕往东北城门。" : activeMap.missionText}
+          missionItems={phase === "road" ? [
+            { label: "在高草中遭遇宠物", done: captured },
+            { label: "完成一次捕捉", done: captured },
+            { label: "沿正确道路抵达城门" },
+          ] : phase === "city" ? [
+            { label: "从南门进入学院区", done: roadPos.y < 82 },
+            { label: "绕过中央星泉", done: roadPos.y < 42 },
+            { label: "与诺亚交谈" },
+          ] : phase === "festival" ? [
+            { label: "穿过黄金灯市", done: roadPos.y < 78 },
+            { label: "登上彩虹共鸣环" },
+          ] : phase === "rupture" ? [
+            ...RUPTURE_NODE_POSITIONS.map((_, index) => ({ label: `稳定灵契节点 ${index + 1}`, done: ruptureNodes.includes(index) })),
+            { label: "前往上方裂隙台", done: false },
+          ] : [
+            { label: "绕开破碎万灵晶核", done: roadPos.y < 58 },
+            { label: "抵达上方记忆祭台" },
+          ]}
+          markers={<>
+            {phase === "road" && <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>}
+            {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
+            {phase === "festival" && <>
+              {FESTIVAL_HEROES.map((hero, index) => {
+                const positions = [{ x: 39, y: 45 }, { x: 45, y: 38 }, { x: 55, y: 38 }, { x: 61, y: 45 }, { x: 50, y: 31 }];
+                return <div key={hero.name} className="map-character-marker" style={{ left: `${positions[index].x}%`, top: `${positions[index].y}%` }}><Character name={hero.name} variant={hero.variant} small /><span>{hero.name}</span></div>;
+              })}
+              <button type="button" className="map-landmark ceremony-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>万灵共鸣环</span><i>按 E</i></button>
+            </>}
+            {phase === "rupture" && <>
+              {RUPTURE_NODE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${ruptureNodes.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={exploreInteraction} aria-label={`灵契节点${index + 1}`}><i>{ruptureNodes.includes(index) ? "✓" : "!"}</i><span>{ruptureNodes.includes(index) ? "已稳定" : `节点 ${index + 1}`}</span></button>)}
+              {ruptureNodes.length === 3 && <button type="button" className="map-landmark rift-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>裂隙中央</span><i>按 E</i></button>}
+            </>}
+            {phase === "aftermath" && <>
+              <div className="map-character-marker temple-sergi" style={{ left: "46%", top: "18%" }}><Character name="塞其" variant="sergi" small /><span>塞其</span></div>
+              <div className="map-character-marker temple-angela" style={{ left: "54%", top: "18%" }}><Character name="安琪儿" variant="angela" small /><span>安琪儿</span></div>
+              <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>记忆祭台</span><i>按 E</i></button>
+            </>}
+          </>}
+          onMove={moveRoad}
+          onInteract={exploreInteraction}
+        />
       )}
 
       {phase === "capture" && partner && (
@@ -943,7 +1220,7 @@ export default function Home() {
         </section>
       )}
 
-      {phase === "city" && (
+      {phase === "city" && cityDialogueOpen && (
         <Dialogue lines={[
           { speaker: "旁白", text: "越过最后一座石桥，彩虹城的高塔第一次出现在你眼前。" },
           { speaker: "诺亚", role: "学院考生", text: `你就是${playerName}？档案上说，你的宠物还没有登记灵契。` },
@@ -970,26 +1247,8 @@ export default function Home() {
         </section>
       )}
 
-      {phase === "festival" && (
+      {phase === "festival" && festivalDialogueOpen && (
         <Dialogue lines={FESTIVAL_LINES} onComplete={() => go("rupture")} backdrop={<div className="festival-bg"><div className="rainbow-ring"><i /><i /><i /><i /><i /></div><div className="hero-line">{FESTIVAL_HEROES.map((hero, index) => <div key={hero.name} className={`hero-token hero-${index}`}><Character name={hero.name} variant={hero.variant} /><span>{hero.name}</span></div>)}</div><div className="crowd-line">{Array.from({ length: 18 }).map((_, index) => <i key={index} />)}</div></div>} />
-      )}
-
-      {phase === "rupture" && partner && (
-        <section className="rupture-screen">
-          <div className="rupture-sky"><i /><i /><i /></div>
-          <div className="rupture-copy"><small>EMERGENCY · 灵契异常</small><h2>共鸣环断裂了</h2><p>触碰广场上三处闪烁的灵契，帮助失控宠物记住身边的人。</p></div>
-          <div className="rupture-field">
-            {[0, 1, 2].map((node) => (
-              <button type="button" key={node} className={`rupture-node node-${node}${ruptureNodes.includes(node) ? " restored" : ""}`} onClick={() => toggleRuptureNode(node)} aria-label={`稳定第${node + 1}处灵契`}>
-                <PetSprite id={node === 0 ? "bird" : node === 1 ? "wild" : "leaf"} size="md" glitched={!ruptureNodes.includes(node)} />
-                <span>{ruptureNodes.includes(node) ? "已稳定" : "触碰灵纹"}</span>
-              </button>
-            ))}
-            <div className="rupture-player"><Character name={playerName} /><PetSprite id={partner.id} size="md" /></div>
-          </div>
-          <div className="rupture-status"><span>{ruptureNodes.length} / 3</span><Meter value={ruptureNodes.length} max={3} kind="memory" /></div>
-          {ruptureNodes.length === 3 && <button type="button" className="primary-action rupture-next" onClick={() => go("boss")}><span>前往广场中央</span><b>›</b></button>}
-        </section>
       )}
 
       {phase === "boss" && partner && (
@@ -1012,7 +1271,7 @@ export default function Home() {
         </section>
       )}
 
-      {phase === "aftermath" && (
+      {phase === "aftermath" && aftermathDialogueOpen && (
         <Dialogue lines={AFTERMATH_LINES} onComplete={() => go("ending")} backdrop={<div className="temple-bg"><div className="temple-columns"><i /><i /><i /><i /></div><div className="crystal-core"><i /><span>万灵晶核</span></div><div className="temple-characters"><div><Character name="塞其" variant="sergi" /><span>塞其</span></div><div><Character name="安琪儿" variant="angela" /><span>安琪儿</span></div></div></div>} />
       )}
 
