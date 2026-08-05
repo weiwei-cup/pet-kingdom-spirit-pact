@@ -3136,6 +3136,69 @@ img {
 
 .pet-habitat b { color: #d9d5a3; font-size: 8px; }
 
+.pet-roster-controls {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 2px solid color-mix(in srgb, var(--pet-accent) 48%, #315650);
+  background: rgba(8, 29, 35, 0.82);
+}
+
+.pet-exp-block > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.pet-exp-block > span b {
+  color: #d9d4a1;
+  font-size: 7px;
+}
+
+.pet-exp-block > span em {
+  color: var(--pet-accent);
+  font: normal 6px ui-monospace, monospace;
+}
+
+.pet-exp-block > i {
+  display: block;
+  height: 7px;
+  border: 1px solid #315650;
+  background: #071d23;
+  overflow: hidden;
+}
+
+.pet-exp-block > i b {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--pet-deep), var(--pet-accent));
+}
+
+.pet-roster-controls > button {
+  min-width: 116px;
+  padding: 8px 10px;
+  border: 2px solid var(--pet-accent);
+  color: #fff0ac;
+  background: var(--pet-deep);
+  box-shadow: 2px 2px 0 #06171c;
+  font-family: inherit;
+  font-size: 7px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pet-roster-controls > button:disabled {
+  border-color: #486761;
+  color: #78968d;
+  background: #173239;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
 .pet-detail-columns {
   display: grid;
   grid-template-columns: minmax(210px, 0.82fr) minmax(280px, 1.18fr);
@@ -3223,6 +3286,46 @@ img {
 .pet-skill > span b { color: #f5e2a4; font-size: 8px; }
 .pet-skill > span em { color: #8bb7aa; font: normal 6px ui-monospace, monospace; }
 .pet-skill p { margin: 4px 0 0 39px; color: #779d93; font-size: 6px; line-height: 1.5; }
+
+.pet-skill.skill-locked {
+  --pet-accent: #526d68;
+  opacity: 0.66;
+}
+
+.skill-slot-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 0 39px;
+  padding-top: 5px;
+  border-top: 1px solid #284b47;
+}
+
+.skill-slot-actions > span {
+  color: var(--pet-accent);
+  font-size: 5px;
+}
+
+.skill-slot-actions button {
+  padding: 3px 5px;
+  border: 1px solid #4d736c;
+  color: #9abbb0;
+  background: #0b252c;
+  font-size: 5px;
+  cursor: pointer;
+}
+
+.skill-slot-actions button.active {
+  border-color: var(--pet-accent);
+  color: #fff0a8;
+  background: var(--pet-deep);
+}
+
+.skill-slot-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .locked-pet-detail {
   display: flex;

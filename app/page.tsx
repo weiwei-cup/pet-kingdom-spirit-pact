@@ -31,6 +31,7 @@ type CollectionView = "bag" | "dex";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit";
 type PetStats = { hp: number; attack: number; defense: number; spirit: number; speed: number };
 type PetSkill = { name: string; level: number; element: PetElement; power: number | null; description: string };
+type PetProgress = { id: PetSpeciesId; level: number; experience: number; equippedSkills: string[] };
 type PetSpecies = {
   id: PetSpeciesId;
   number: number;
@@ -54,10 +55,12 @@ type SaveData = {
   capturedPetId?: RouteEncounterId;
   ownedPetIds?: PetSpeciesId[];
   seenPetIds?: PetSpeciesId[];
+  activePetId?: PetSpeciesId;
+  petProgress?: PetProgress[];
 };
 
 type Partner = {
-  id: PartnerId;
+  id: PetSpeciesId;
   name: string;
   kind: string;
   nature: string;
@@ -115,7 +118,7 @@ type ExplorationMapDefinition = {
 
 const SAVE_KEY = "pet-kingdom-spirit-pact-prologue-v1";
 
-const PARTNERS: Record<PartnerId, Partner> = {
+const PARTNERS: Record<PartnerId, Partner & { id: PartnerId }> = {
   leaf: {
     id: "leaf",
     name: "叶团子",
@@ -179,7 +182,7 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
     skills: [
       { name: "芽叶拍击", level: 1, element: "plant", power: 38, description: "以卷起的嫩叶连续拍击目标。" },
       { name: "新芽守护", level: 4, element: "plant", power: null, description: "恢复少量体力，并提高一回合防御。" },
-      { name: "藤蔓牵引", level: 9, element: "plant", power: 58, description: "从地面唤出藤蔓，较低概率降低速度。" },
+      { name: "藤蔓牵引", level: 5, element: "plant", power: 58, description: "从地面唤出藤蔓，较低概率降低速度。" },
     ],
   },
   metal: {
@@ -198,7 +201,7 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
     skills: [
       { name: "银尾突进", level: 1, element: "metal", power: 44, description: "用硬化尾甲高速冲撞目标。" },
       { name: "反光甲片", level: 4, element: "metal", power: null, description: "展开甲片，本回合受到的伤害减半。" },
-      { name: "铆钉连射", level: 10, element: "metal", power: 62, description: "射出两轮金属碎片，擅长击破护盾。" },
+      { name: "铆钉连射", level: 5, element: "metal", power: 62, description: "射出两轮金属碎片，擅长击破护盾。" },
     ],
   },
   tide: {
@@ -217,7 +220,7 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
     skills: [
       { name: "潮泡连弹", level: 1, element: "water", power: 40, description: "连续发射压缩水泡攻击目标。" },
       { name: "清凉水幕", level: 4, element: "water", power: null, description: "清除一种负面状态并恢复少量体力。" },
-      { name: "回流尾击", level: 9, element: "water", power: 60, description: "借回流摆尾攻击，先手时威力提高。" },
+      { name: "回流尾击", level: 5, element: "water", power: 60, description: "借回流摆尾攻击，先手时威力提高。" },
     ],
   },
   wild: {
@@ -255,7 +258,7 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
     skills: [
       { name: "疾速啄击", level: 1, element: "wind", power: 36, description: "依靠速度发动的先制攻击。" },
       { name: "回旋风刃", level: 5, element: "wind", power: 52, description: "盘旋后斩出风刃，较容易连续行动。" },
-      { name: "羽光加速", level: 10, element: "wind", power: null, description: "抖落银羽，大幅提高自身速度。" },
+      { name: "羽光加速", level: 5, element: "wind", power: null, description: "抖落银羽，大幅提高自身速度。" },
     ],
   },
   guardian: {
@@ -294,6 +297,72 @@ function storySightingsForPhase(phase: Phase) {
   if (["exam", "festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("bird");
   if (["boss", "aftermath", "ending"].includes(phase)) sightings.push("guardian");
   return sightings;
+}
+
+function experienceToNextLevel(level: number) {
+  return 20 + level * 18;
+}
+
+function createPetProgress(id: PetSpeciesId): PetProgress {
+  const species = PET_SPECIES[id];
+  const unlocked = species.skills.filter((skill) => skill.level <= species.defaultLevel);
+  const firstAttack = unlocked.find((skill) => skill.power !== null) ?? unlocked[0];
+  const firstSupport = unlocked.find((skill) => skill.power === null && skill.name !== firstAttack?.name);
+  const secondAttack = unlocked.find((skill) => skill.name !== firstAttack?.name);
+  return {
+    id,
+    level: species.defaultLevel,
+    experience: 0,
+    equippedSkills: [firstAttack, firstSupport ?? secondAttack].filter((skill): skill is PetSkill => Boolean(skill)).map((skill) => skill.name),
+  };
+}
+
+function normalizePetProgress(value: unknown, id: PetSpeciesId): PetProgress {
+  const fallback = createPetProgress(id);
+  if (!value || typeof value !== "object") return fallback;
+  const saved = value as Partial<PetProgress>;
+  const species = PET_SPECIES[id];
+  const level = typeof saved.level === "number" ? Math.max(species.defaultLevel, Math.floor(saved.level)) : fallback.level;
+  const availableNames = new Set(species.skills.filter((skill) => skill.level <= level).map((skill) => skill.name));
+  const equippedSkills = Array.isArray(saved.equippedSkills)
+    ? saved.equippedSkills.filter((name): name is string => typeof name === "string" && availableNames.has(name)).slice(0, 2)
+    : [];
+  return {
+    id,
+    level,
+    experience: typeof saved.experience === "number" ? Math.max(0, Math.floor(saved.experience)) : 0,
+    equippedSkills: equippedSkills.length > 0 ? equippedSkills : fallback.equippedSkills,
+  };
+}
+
+function addPetExperience(progress: PetProgress, amount: number) {
+  let level = progress.level;
+  let experience = progress.experience + amount;
+  while (experience >= experienceToNextLevel(level)) {
+    experience -= experienceToNextLevel(level);
+    level += 1;
+  }
+  const unlocked = PET_SPECIES[progress.id].skills.filter((skill) => skill.level <= level);
+  const equippedSkills = [...progress.equippedSkills];
+  for (const skill of unlocked) {
+    if (equippedSkills.length >= 2) break;
+    if (!equippedSkills.includes(skill.name)) equippedSkills.push(skill.name);
+  }
+  return { ...progress, level, experience, equippedSkills };
+}
+
+function scaledPetStats(species: PetSpecies, level: number) {
+  const growth = Math.max(0, level - species.defaultLevel);
+  return Object.fromEntries(Object.entries(species.stats).map(([key, value]) => [key, Math.min(99, value + growth * 2)])) as PetStats;
+}
+
+function petBattleFxKind(element: PetElement): BattleFxKind {
+  if (element === "plant") return "leaf";
+  if (element === "metal") return "metal";
+  if (element === "water") return "tide";
+  if (element === "wind") return "wind";
+  if (element === "spirit") return "memory";
+  return "claw";
 }
 
 const CHARACTER_ART: Record<CharacterVariant, string> = {
@@ -539,20 +608,34 @@ function PetCollectionModal({
   ownedPetIds,
   seenPetIds,
   starterId,
+  activePetId,
+  petProgress,
+  managementLocked,
+  onSetActivePet,
+  onEquipSkill,
   onClose,
 }: {
   initialView: CollectionView;
   ownedPetIds: PetSpeciesId[];
   seenPetIds: PetSpeciesId[];
   starterId: PartnerId | null;
+  activePetId: PetSpeciesId | null;
+  petProgress: PetProgress[];
+  managementLocked: boolean;
+  onSetActivePet: (id: PetSpeciesId) => void;
+  onEquipSkill: (id: PetSpeciesId, slot: number, skillName: string) => void;
   onClose: () => void;
 }) {
-  const initialSelection = initialView === "bag" ? ownedPetIds[0] ?? starterId ?? "leaf" : starterId ?? PET_SPECIES_ORDER[0];
+  const initialSelection = initialView === "bag" ? activePetId ?? ownedPetIds[0] ?? starterId ?? "leaf" : starterId ?? PET_SPECIES_ORDER[0];
   const [view, setView] = useState<CollectionView>(initialView);
   const [selectedId, setSelectedId] = useState<PetSpeciesId>(initialSelection);
   const owned = useMemo(() => new Set(ownedPetIds), [ownedPetIds]);
   const seen = useMemo(() => new Set(seenPetIds), [seenPetIds]);
+  const progressById = useMemo(() => new Map(petProgress.map((entry) => [entry.id, entry])), [petProgress]);
   const selected = PET_SPECIES[selectedId];
+  const selectedProgress = progressById.get(selectedId);
+  const selectedLevel = selectedProgress?.level ?? selected.defaultLevel;
+  const selectedStats = scaledPetStats(selected, selectedLevel);
   const selectedKnown = owned.has(selectedId) || seen.has(selectedId);
   const list = view === "bag" ? ownedPetIds : PET_SPECIES_ORDER;
 
@@ -585,7 +668,8 @@ function PetCollectionModal({
               const species = PET_SPECIES[id];
               const isOwned = owned.has(id);
               const isSeen = seen.has(id) || isOwned;
-              const state = isOwned ? (id === starterId ? "出战" : "同行") : isSeen ? "发现" : "未知";
+              const progress = progressById.get(id);
+              const state = isOwned ? (id === activePetId ? "首发" : "同行") : isSeen ? "发现" : "未知";
               return (
                 <button
                   type="button"
@@ -597,7 +681,7 @@ function PetCollectionModal({
                   <span className="pet-entry-number">No.{String(species.number).padStart(3, "0")}</span>
                   <div className="pet-entry-sprite"><PetSprite id={id} size={view === "bag" ? "md" : "sm"} /></div>
                   <span className="pet-entry-copy"><b>{isSeen ? species.name : "未记录"}</b><small>{isSeen ? species.elementLabel : "???"}</small></span>
-                  <em>{view === "bag" ? `Lv.${species.defaultLevel}` : state}</em>
+                  <em>{view === "bag" ? `Lv.${progress?.level ?? species.defaultLevel}` : state}</em>
                   {view === "bag" && <i className="party-slot">{String(index + 1).padStart(2, "0")}</i>}
                 </button>
               );
@@ -615,7 +699,7 @@ function PetCollectionModal({
             ) : (
               <>
                 <div className="pet-detail-hero">
-                  <div className="pet-detail-sprite"><PetSprite id={selected.id} size="xl" /><span>Lv.{selected.defaultLevel}</span></div>
+                  <div className="pet-detail-sprite"><PetSprite id={selected.id} size="xl" /><span>Lv.{selectedLevel}</span></div>
                   <div className="pet-detail-title">
                     <small>No.{String(selected.number).padStart(3, "0")} · {selected.category}</small>
                     <h3>{selected.name}</h3>
@@ -624,15 +708,32 @@ function PetCollectionModal({
                 </div>
                 <p className="pet-description">{selected.description}</p>
                 <div className="pet-habitat"><span>主要栖息地</span><b>{selected.habitat}</b></div>
+                {view === "bag" && selectedProgress && (
+                  <div className="pet-roster-controls">
+                    <div className="pet-exp-block">
+                      <span><b>成长经验</b><em>{selectedProgress.experience} / {experienceToNextLevel(selectedProgress.level)}</em></span>
+                      <i><b style={{ width: `${(selectedProgress.experience / experienceToNextLevel(selectedProgress.level)) * 100}%` }} /></i>
+                    </div>
+                    <button type="button" disabled={selectedId === activePetId || managementLocked} onClick={() => onSetActivePet(selectedId)}>{selectedId === activePetId ? "当前首发" : managementLocked ? "战斗中不可调整" : "设为首发伙伴"}</button>
+                  </div>
+                )}
                 <div className="pet-detail-columns">
                   <section className="pet-stat-panel">
                     <h4>基础能力</h4>
-                    {PET_STAT_LABELS.map(({ key, label }) => <div className="pet-stat-row" key={key}><span>{label}</span><i><b style={{ width: `${selected.stats[key]}%` }} /></i><em>{selected.stats[key]}</em></div>)}
+                    {PET_STAT_LABELS.map(({ key, label }) => <div className="pet-stat-row" key={key}><span>{label}</span><i><b style={{ width: `${selectedStats[key]}%` }} /></i><em>{selectedStats[key]}</em></div>)}
                     <small>基础能力上限为 100，实际数值会随等级成长。</small>
                   </section>
                   <section className="pet-skill-panel">
-                    <h4>技能记录</h4>
-                    {selected.skills.map((skill) => <div className={`pet-skill element-${skill.element}`} key={skill.name}><span><i>Lv.{skill.level}</i><b>{skill.name}</b><em>{skill.power === null ? "变化" : `威力 ${skill.power}`}</em></span><p>{skill.description}</p></div>)}
+                    <h4>{view === "bag" && selectedProgress ? "技能配置 · 2 个技能槽" : "技能记录"}</h4>
+                    {selected.skills.map((skill) => {
+                      const unlocked = skill.level <= selectedLevel;
+                      const equippedSlot = selectedProgress?.equippedSkills.indexOf(skill.name) ?? -1;
+                      return <div className={`pet-skill element-${skill.element}${unlocked ? "" : " skill-locked"}`} key={skill.name}>
+                        <span><i>Lv.{skill.level}</i><b>{unlocked ? skill.name : "尚未领悟"}</b><em>{unlocked ? skill.power === null ? "变化" : `威力 ${skill.power}` : `Lv.${skill.level} 解锁`}</em></span>
+                        <p>{unlocked ? skill.description : "继续获得经验并提升等级后即可查看。"}</p>
+                        {view === "bag" && selectedProgress && unlocked && <div className="skill-slot-actions"><span>{equippedSlot >= 0 ? `已装备在技能 ${equippedSlot + 1}` : "可装备"}</span><button type="button" className={equippedSlot === 0 ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, 0, skill.name)}>技能 1</button><button type="button" className={equippedSlot === 1 ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, 1, skill.name)}>技能 2</button></div>}
+                      </div>;
+                    })}
                   </section>
                 </div>
               </>
@@ -837,6 +938,8 @@ export default function Home() {
   const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
   const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
+  const [activePetId, setActivePetId] = useState<PetSpeciesId | null>(null);
+  const [petProgress, setPetProgress] = useState<PetProgress[]>([]);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
   const [battleFx, setBattleFx] = useState<BattleFx | null>(null);
   const [battleBusy, setBattleBusy] = useState(false);
@@ -880,7 +983,26 @@ export default function Home() {
   const [bossLog, setBossLog] = useState("白裂狮忘记了自己的名字。攻击只会让它更加狂暴。");
   const [bossWon, setBossWon] = useState(false);
 
-  const partner = partnerId ? PARTNERS[partnerId] : null;
+  const activeProgress = activePetId ? petProgress.find((entry) => entry.id === activePetId) ?? createPetProgress(activePetId) : null;
+  const activeSpecies = activePetId ? PET_SPECIES[activePetId] : null;
+  const activeStats = activeSpecies && activeProgress ? scaledPetStats(activeSpecies, activeProgress.level) : null;
+  const activePetHp = activeStats?.hp;
+  const equippedSkillDefinitions = activeSpecies && activeProgress
+    ? activeProgress.equippedSkills.map((name) => activeSpecies.skills.find((skill) => skill.name === name)).filter((skill): skill is PetSkill => Boolean(skill))
+    : [];
+  const primaryBattleSkill = equippedSkillDefinitions.find((skill) => skill.power !== null) ?? equippedSkillDefinitions[0] ?? null;
+  const secondaryBattleSkill = equippedSkillDefinitions.find((skill) => skill.power === null) ?? equippedSkillDefinitions[1] ?? equippedSkillDefinitions[0] ?? null;
+  const partner: Partner | null = activeSpecies && activeStats ? {
+    id: activeSpecies.id,
+    name: activeSpecies.name,
+    kind: activeSpecies.elementLabel,
+    nature: activeSpecies.role,
+    quote: activeSpecies.description,
+    color: "#78b79e",
+    hp: activeStats.hp,
+    attack: primaryBattleSkill?.name ?? "基础冲撞",
+    support: secondaryBattleSkill?.name ?? primaryBattleSkill?.name ?? "守护姿态",
+  } : null;
   const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
   const activeMap = (["road", "city", "festival", "rupture", "aftermath"] as Phase[]).includes(phase)
     ? EXPLORATION_MAPS[phase as ExplorationPhase]
@@ -927,9 +1049,11 @@ export default function Home() {
       capturedPetId: captured ? routeEncounterId : undefined,
       ownedPetIds,
       seenPetIds,
+      activePetId: activePetId ?? undefined,
+      petProgress,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [captured, ownedPetIds, partnerId, phase, playerName, routeEncounterId, seenPetIds]);
+  }, [activePetId, captured, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -1013,17 +1137,23 @@ export default function Home() {
     setSeenPetIds((current) => mergePetIds(current, ids));
   }, []);
 
+  const grantPetExperience = useCallback((id: PetSpeciesId, amount: number) => {
+    setPetProgress((current) => current.map((entry) => entry.id === id ? addPetExperience(entry, amount) : entry));
+  }, []);
+
   const go = useCallback((next: Phase) => {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
     prepareExplorationMap(next);
     if (next === "shelter") registerPetSightings(STARTER_SIGHTINGS);
     if (next === "exam") registerPetSightings(["bird"]);
     if (next === "boss") registerPetSightings(["guardian"]);
+    if (next === "exam" && activePetHp) setExamHp(activePetHp);
+    if (next === "boss" && activePetHp) setBossPlayerHp(activePetHp);
     if (next === "city") setCityDialogueOpen(false);
     if (next === "festival") setFestivalDialogueOpen(false);
     if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
-  }, [playTone, prepareExplorationMap, registerPetSightings]);
+  }, [activePetHp, playTone, prepareExplorationMap, registerPetSightings]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -1034,6 +1164,8 @@ export default function Home() {
     setCollectionView(null);
     setOwnedPetIds([]);
     setSeenPetIds([]);
+    setActivePetId(null);
+    setPetProgress([]);
     setBattleFx(null);
     setBattleBusy(false);
     setRoadPos(ROAD_START);
@@ -1087,6 +1219,11 @@ export default function Home() {
         (saved.seenPetIds ?? []).filter(isPetSpeciesId),
         restoredOwned,
       );
+      const savedProgress = new Map((saved.petProgress ?? []).filter((entry) => isPetSpeciesId(entry?.id)).map((entry) => [entry.id, entry]));
+      const restoredProgress = restoredOwned.map((id) => normalizePetProgress(savedProgress.get(id), id));
+      const restoredActivePetId = isPetSpeciesId(saved.activePetId) && restoredOwned.includes(saved.activePetId)
+        ? saved.activePetId
+        : restoredPartnerId ?? restoredOwned[0] ?? null;
       setPlayerName(saved.playerName || "小澈");
       setDraftName(saved.playerName || "小澈");
       setPartnerId(restoredPartnerId);
@@ -1095,6 +1232,14 @@ export default function Home() {
       setRouteEncounterId(restoredCapturedId ?? "wild");
       setOwnedPetIds(restoredOwned);
       setSeenPetIds(restoredSeen);
+      setActivePetId(restoredActivePetId);
+      setPetProgress(restoredProgress);
+      if (restoredActivePetId) {
+        const restoredActiveProgress = restoredProgress.find((entry) => entry.id === restoredActivePetId) ?? createPetProgress(restoredActivePetId);
+        const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level).hp;
+        setExamHp(restoredHp);
+        setBossPlayerHp(restoredHp);
+      }
       prepareExplorationMap(restoredPhase);
       setPhase(restoredPhase);
     } catch {
@@ -1105,10 +1250,46 @@ export default function Home() {
   const selectPartner = (id: PartnerId) => {
     setPartnerId(id);
     setOwnedPetIds([id]);
+    setActivePetId(id);
+    setPetProgress([createPetProgress(id)]);
     registerPetSightings(STARTER_SIGHTINGS);
     setExamHp(PARTNERS[id].hp);
+    setBossPlayerHp(PARTNERS[id].hp);
     playTone(id === "leaf" ? 480 : id === "metal" ? 330 : 580);
   };
+
+  const setLeadPet = useCallback((id: PetSpeciesId) => {
+    if (!ownedPetIds.includes(id)) return;
+    const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+    const hp = scaledPetStats(PET_SPECIES[id], progress.level).hp;
+    setActivePetId(id);
+    setExamHp(hp);
+    setBossPlayerHp(hp);
+    setToast(`${PET_SPECIES[id].name}成为了新的首发伙伴。`);
+    playTone(680);
+  }, [ownedPetIds, petProgress, playTone]);
+
+  const equipPetSkill = useCallback((id: PetSpeciesId, slot: number, skillName: string) => {
+    setPetProgress((current) => current.map((entry) => {
+      if (entry.id !== id) return entry;
+      const species = PET_SPECIES[id];
+      const skill = species.skills.find((candidate) => candidate.name === skillName);
+      if (!skill || skill.level > entry.level || slot < 0 || slot > 1) return entry;
+      const next = [...entry.equippedSkills];
+      const previousSlot = next.indexOf(skillName);
+      if (previousSlot === slot) return entry;
+      if (previousSlot >= 0) {
+        const replaced = next[slot];
+        next[slot] = skillName;
+        if (replaced) next[previousSlot] = replaced;
+        else next.splice(previousSlot, 1);
+      } else {
+        next[slot] = skillName;
+      }
+      return { ...entry, equippedSkills: next.filter(Boolean).slice(0, 2) };
+    }));
+    playTone(740);
+  }, [playTone]);
 
   const triggerRoadMotion = useCallback((dx: number, dy: number, duration: number) => {
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
@@ -1255,10 +1436,10 @@ export default function Home() {
     setBattleBusy(true);
     try {
       if (action === "attack") {
-        const damage = partnerId === "metal" ? 11 : 8;
+        const damage = Math.max(7, Math.round((primaryBattleSkill?.power ?? 35) / 5));
         const nextHp = Math.max(4, wildHp - damage);
         setCaptureLog(`${partner.name}压低身体，准备使出${partner.attack}！`);
-        await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
+        await animateBattleFx({ skill: partner.attack, kind: petBattleFxKind(primaryBattleSkill?.element ?? activeSpecies?.element ?? "beast"), attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
         setCaptureLog(`${partner.attack}命中！${routeEncounter.name}踉跄后退，动作慢了下来。`);
         return;
       }
@@ -1283,23 +1464,35 @@ export default function Home() {
           setCaptured(true);
           setCaptureWon(true);
           setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]));
+          setPetProgress((current) => {
+            const withCaptured = current.some((entry) => entry.id === routeEncounter.id)
+              ? current
+              : [...current, createPetProgress(routeEncounter.id)];
+            return withCaptured.map((entry) => {
+              if (entry.id === activePetId) return addPetExperience(entry, 55);
+              if (entry.id === routeEncounter.id) return addPetExperience(entry, 20);
+              return entry;
+            });
+          });
           registerPetSightings([routeEncounter.id]);
         }
       });
-      setCaptureLog(success ? `胶囊没有强行关闭。${routeEncounter.name}主动触碰按钮，接受了你的邀请。` : wildHp > captureThreshold ? `${routeEncounter.name}还有力气挣脱。先让它停下来。` : "它的体力已经很低，但仍不信任你。试着安抚它。");
+      setCaptureLog(success ? `胶囊没有强行关闭。${routeEncounter.name}主动触碰按钮，接受了你的邀请；${partner.name}获得 55 点经验。` : wildHp > captureThreshold ? `${routeEncounter.name}还有力气挣脱。先让它停下来。` : "它的体力已经很低，但仍不信任你。试着安抚它。");
     } finally {
       setBattleBusy(false);
     }
   };
 
-  const examAction = async (action: "attack" | "support") => {
+  const examAction = async (slot: 0 | 1) => {
     if (examWon || battleBusy || !partner) return;
+    const skill = equippedSkillDefinitions[slot];
+    if (!skill) return;
     setBattleBusy(true);
     try {
-      if (action === "support") {
-        const isGuard = partnerId === "metal";
-        setExamLog(`${partner.name}使出${partner.support}，银羽雀正在寻找反击角度。`);
-        await animateBattleFx({ skill: partner.support, kind: isGuard ? "guard" : "heal", attacker: "ally", target: "ally", value: isGuard ? "伤害减半" : "HP +10", positive: true }, () => {
+      if (skill.power === null) {
+        const isGuard = ["metal", "beast", "spirit"].includes(skill.element) || skill.description.includes("防御") || skill.description.includes("伤害减半");
+        setExamLog(`${partner.name}使出${skill.name}，银羽雀正在寻找反击角度。`);
+        await animateBattleFx({ skill: skill.name, kind: isGuard ? "guard" : "heal", attacker: "ally", target: "ally", value: isGuard ? "伤害减半" : "HP +10", positive: true }, () => {
           if (isGuard) setExamGuard(true);
           else setExamHp((value) => Math.min(partner.hp, value + 10));
         });
@@ -1309,16 +1502,17 @@ export default function Home() {
           setExamHp((value) => Math.max(8, value - incoming));
           setExamGuard(false);
         });
-        setExamLog(isGuard ? `${partner.support}挡住了大半风刃，只受到 ${incoming} 点伤害。` : `${partner.support}稳住了阵脚，风刃造成 ${incoming} 点伤害。`);
+        setExamLog(isGuard ? `${skill.name}挡住了大半风刃，只受到 ${incoming} 点伤害。` : `${skill.name}稳住了阵脚，风刃造成 ${incoming} 点伤害。`);
         return;
       }
-      const damage = partnerId === "metal" ? 13 : partnerId === "tide" ? 11 : 10;
+      const damage = Math.max(9, Math.round(skill.power / 5) + Math.floor((activeProgress?.level ?? 5) / 4));
       const nextEnemy = Math.max(0, examEnemy - damage);
-      setExamLog(`${partner.name}锁定银羽雀，${partner.attack}即将发动！`);
-      await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${examEnemy - nextEnemy}` }, () => setExamEnemy(nextEnemy));
+      setExamLog(`${partner.name}锁定银羽雀，${skill.name}即将发动！`);
+      await animateBattleFx({ skill: skill.name, kind: petBattleFxKind(skill.element), attacker: "ally", target: "enemy", value: `-${examEnemy - nextEnemy}` }, () => setExamEnemy(nextEnemy));
       if (nextEnemy === 0) {
         setExamWon(true);
-        setExamLog(`${partner.name}稳稳停在边线前。银羽雀失去战斗能力——考核通过！`);
+        if (activePetId) grantPetExperience(activePetId, 90);
+        setExamLog(`${partner.name}稳稳停在边线前。银羽雀失去战斗能力——考核通过！获得 90 点经验。`);
         playTone(820);
         return;
       }
@@ -1328,7 +1522,7 @@ export default function Home() {
         setExamGuard(false);
         setExamHp((value) => Math.max(8, value - incoming));
       });
-      setExamLog(`${partner.attack}造成 ${damage} 点伤害；银羽雀反击造成 ${incoming} 点伤害。`);
+      setExamLog(`${skill.name}造成 ${damage} 点伤害；银羽雀反击造成 ${incoming} 点伤害。`);
     } finally {
       setBattleBusy(false);
     }
@@ -1342,25 +1536,29 @@ export default function Home() {
         const ready = memories.length === 3;
         setBossLog(ready ? `${playerName}没有下令攻击，而是大声呼唤那段记忆里的名字。` : "记忆还不完整。你仍试着穿过黑铃的噪声呼唤它……");
         await animateBattleFx({ skill: ready ? "真名呼唤 · 白裂狮" : "未完成的呼唤", kind: "call", attacker: "trainer", target: "enemy", value: ready ? "记忆苏醒" : "回应微弱", positive: true }, () => {
-          if (ready) setBossWon(true);
+          if (ready) {
+            setBossWon(true);
+            if (activePetId) grantPetExperience(activePetId, 170);
+          }
         });
-        setBossLog(ready ? "“白裂狮——塞其还在等你。” 它身上的灵纹重新亮起，利爪停在了你面前。" : "白裂狮似乎听见了一瞬，但记忆很快又被铃声淹没。");
+        setBossLog(ready ? `“白裂狮——塞其还在等你。” 它身上的灵纹重新亮起；${partner.name}获得 170 点经验。` : "白裂狮似乎听见了一瞬，但记忆很快又被铃声淹没。");
         if (ready) playTone(880);
         return;
       }
 
       let incoming = 9;
       if (action === "attack") {
-        const nextHp = Math.max(18, bossHp - 9);
+        const damage = Math.max(9, Math.round((primaryBattleSkill?.power ?? 40) / 6));
+        const nextHp = Math.max(18, bossHp - damage);
         incoming = 10;
         setBossLog(`${partner.name}迎着利爪冲了上去——${partner.attack}！`);
-        await animateBattleFx({ skill: partner.attack, kind: partner.id, attacker: "ally", target: "enemy", value: `-${bossHp - nextHp}` }, () => setBossHp(nextHp));
+        await animateBattleFx({ skill: partner.attack, kind: petBattleFxKind(primaryBattleSkill?.element ?? activeSpecies?.element ?? "beast"), attacker: "ally", target: "enemy", value: `-${bossHp - nextHp}` }, () => setBossHp(nextHp));
         setBossLog(nextHp === 18 ? "白裂狮已经到达极限，但黑铃仍在强迫它战斗！" : "白裂狮被击退半步，随即在黑铃声中再次扑来！");
       }
       if (action === "soothe") {
         incoming = 5;
         setBossLog(`${partner.name}没有攻击，而是展开${partner.support}守在你身前。`);
-        await animateBattleFx({ skill: partner.support, kind: "guard", attacker: "ally", target: "ally", value: "伤害降低", positive: true });
+        await animateBattleFx({ skill: partner.support, kind: secondaryBattleSkill?.power === null ? "guard" : petBattleFxKind(secondaryBattleSkill?.element ?? "beast"), attacker: "ally", target: "ally", value: "伤害降低", positive: true });
       }
       if (action === "protect") {
         incoming = memories.length < 3 ? 4 : 3;
@@ -1463,7 +1661,7 @@ export default function Home() {
               <p>黎叔把三枚封印球放回抽屉。今天，不由训练师先做决定。</p>
             </div>
             <div className="partner-selection">
-              {(Object.values(PARTNERS) as Partner[]).map((candidate) => (
+              {Object.values(PARTNERS).map((candidate) => (
                 <button type="button" key={candidate.id} className={`partner-card${partnerId === candidate.id ? " selected" : ""}`} onClick={() => selectPartner(candidate.id)}>
                   <div className="partner-art"><PetSprite id={candidate.id} size="lg" /><span>{candidate.kind}</span></div>
                   <div className="partner-copy"><small>{candidate.nature}</small><b>{candidate.name}</b><p>{candidate.quote}</p></div>
@@ -1551,7 +1749,7 @@ export default function Home() {
             <div className={battleActorClass("enemy", battleFx)}><PetSprite id={routeEncounter.id} size="xl" /></div>
             <div className="calm-indicator"><span>戒备</span><Meter value={wildCalm} max={3} kind="calm" /></div>
           </div>
-          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.5</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
           <div className="battle-command">
             <div className="battle-log"><span>行动记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "演出中" : "等待指令"}</i><p>{captureLog}</p></div>
             {!captureWon ? <div className="command-grid">
@@ -1579,12 +1777,12 @@ export default function Home() {
           <BattleEffects fx={battleFx} />
           <div className="battle-heading light"><small>RAINBOW ACADEMY · ENTRY TEST</small><h2>新生考核</h2><p>击败诺亚的银羽雀，取得临时训练师徽章。</p></div>
           <div className="enemy-side"><div className="combatant-info"><span><b>银羽雀</b><small>飞行系 · Lv.6</small></span><em>{examEnemy} / 48</em><Meter value={examEnemy} max={48} /></div><div className={battleActorClass("enemy", battleFx)}><PetSprite id="bird" size="xl" /></div><div className="trainer-label"><Character name="诺亚" variant="noah" small /><span>诺亚</span></div></div>
-          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.6</small></span><em>{examHp} / {partner.hp}</em><Meter value={examHp} max={partner.hp} /></div><div className="trainer-label"><Character name={playerName} variant="player" small /><span>{playerName}</span></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>{examHp} / {partner.hp}</em><Meter value={examHp} max={partner.hp} /></div><div className="trainer-label"><Character name={playerName} variant="player" small /><span>{playerName}</span></div></div>
           <div className="battle-command">
             <div className="battle-log"><span>裁判记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : "等待指令"}</i><p>{examLog}</p></div>
             {!examWon ? <div className="command-grid two">
-              <button type="button" disabled={battleBusy} onClick={() => examAction("attack")}><span>技能 01</span><b>{partner.attack}</b><small>稳定伤害</small></button>
-              <button type="button" disabled={battleBusy} onClick={() => examAction("support")}><span>技能 02</span><b>{partner.support}</b><small>{partnerId === "metal" ? "减轻伤害" : "恢复体力"}</small></button>
+              <button type="button" disabled={battleBusy || !equippedSkillDefinitions[0]} onClick={() => examAction(0)}><span>技能 01</span><b>{equippedSkillDefinitions[0]?.name ?? "未配置"}</b><small>{equippedSkillDefinitions[0]?.power === null ? "变化技能" : `威力 ${equippedSkillDefinitions[0]?.power ?? 0}`}</small></button>
+              <button type="button" disabled={battleBusy || !equippedSkillDefinitions[1]} onClick={() => examAction(1)}><span>技能 02</span><b>{equippedSkillDefinitions[1]?.name ?? "未配置"}</b><small>{equippedSkillDefinitions[1]?.power === null ? "变化技能" : `威力 ${equippedSkillDefinitions[1]?.power ?? 0}`}</small></button>
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("festival")}><span>参加黄金庆典</span><b>›</b></button>}
           </div>
         </section>
@@ -1600,7 +1798,7 @@ export default function Home() {
           <BattleEffects fx={battleFx} />
           <div className="battle-heading light"><small>AWAKENING BATTLE · NOT A HUNT</small><h2>被遗忘的名字</h2><p>保护浮现的记忆。不要让白裂狮在狂乱中耗尽自己。</p></div>
           <div className="enemy-side guardian-side"><div className="combatant-info danger"><span><b>白裂狮</b><small>金属系 · 灵契断裂</small></span><em>{bossHp} / 86</em><Meter value={bossHp} max={86} /></div><div className={battleActorClass("enemy", battleFx)}><PetSprite id="guardian" size="xl" glitched={!bossWon} /></div><div className="black-bell">◆<span>黑铃共鸣</span></div></div>
-          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>未登记灵契</small></span><em>{bossPlayerHp} / 68</em><Meter value={bossPlayerHp} max={68} /></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>{bossPlayerHp} / {partner.hp}</em><Meter value={bossPlayerHp} max={partner.hp} /></div></div>
           <div className="memory-ribbon">{[0, 1, 2].map((slot) => <div key={slot} className={memories[slot] ? "found" : ""}><span>{slot + 1}</span><p>{memories[slot] ?? "记忆尚未浮现"}</p></div>)}</div>
           <div className="battle-command boss-command">
             <div className="battle-log"><span>灵契回声</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "共鸣进行中" : "等待指令"}</i><p>{bossLog}</p></div>
@@ -1620,14 +1818,14 @@ export default function Home() {
 
       {phase === "ending" && partner && (
         <section className="ending-screen">
-          <div className="ending-landscape"><div className="dawn-orb" /><div className="ending-city"><i /><i /><i /></div><div className="ending-party"><Character name={playerName} /><PetSprite id={partner.id} size="lg" />{captured && <PetSprite id={routeEncounter.id} size="md" />}</div></div>
+          <div className="ending-landscape"><div className="dawn-orb" /><div className="ending-city"><i /><i /><i /></div><div className="ending-party"><Character name={playerName} /><PetSprite id={partner.id} size="lg" />{captured && routeEncounter.id !== partner.id && <PetSprite id={routeEncounter.id} size="md" />}</div></div>
           <div className="ending-card">
             <div className="ending-kicker">PROLOGUE COMPLETE</div>
             <h2>没有登记的伙伴</h2>
             <p>彩虹城在身后封锁。东之高原的风里，传来了黑色铃铛的声音。</p>
             <div className="ending-record">
               <div><small>训练师</small><b>{playerName}</b></div>
-              <div><small>初始伙伴</small><b>{partner.name}</b></div>
+              <div><small>首发伙伴</small><b>{partner.name} · Lv.{activeProgress?.level ?? 5}</b></div>
               <div><small>图鉴记录</small><b>{seenPetIds.length} / {PET_SPECIES_ORDER.length}</b></div>
               <div><small>下一目标</small><b>东之高原</b></div>
             </div>
@@ -1643,6 +1841,11 @@ export default function Home() {
           ownedPetIds={ownedPetIds}
           seenPetIds={seenPetIds}
           starterId={partnerId}
+          activePetId={activePetId}
+          petProgress={petProgress}
+          managementLocked={battleBusy || ["capture", "exam", "boss"].includes(phase)}
+          onSetActivePet={setLeadPet}
+          onEquipSkill={equipPetSkill}
           onClose={() => setCollectionView(null)}
         />
       )}
