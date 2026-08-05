@@ -438,11 +438,12 @@ const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
 
 const MAP_PIXEL_SIZE = { width: 1536, height: 1024 };
 const HOME_PIXEL_SIZE = { width: 1672, height: 941 };
-const ROAD_STEP = { x: 100 / 48, y: 100 / 32 };
+const MOVEMENT_TICK_MS = 72;
+const ROAD_STEP = { x: 100 / 78, y: 100 / 52 };
 const ROAD_START: Position = { x: 16.7, y: 84.4 };
 const CITY_GATE: Position = { x: 84.5, y: 15.5 };
 const HOME_START: Position = { x: 42, y: 49 };
-const HOME_STEP = { x: 2.15, y: 3.3 };
+const HOME_STEP = { x: 1.28, y: 1.92 };
 
 const HOME_INTERACTIONS: Record<HomeDiscovery, { position: Position; marker: Position; label: string; hint: string }> = {
   photo: { position: { x: 55, y: 34 }, marker: { x: 56, y: 22 }, label: "褪色合影", hint: "墙上那张合影似乎被人重新摆正过。" },
@@ -636,7 +637,7 @@ function Character({ name, variant = "player", small = false }: { name: string; 
 
 function MapPlayerSprite({ facing, moving, step }: { facing: RoadFacing; moving: boolean; step: number }) {
   const row = { down: 0, left: 1, right: 2, up: 3 }[facing];
-  const column = moving ? (step % 2 === 0 ? 0 : 2) : 1;
+  const column = moving ? (Math.floor(step / 2) % 2 === 0 ? 0 : 2) : 1;
   const x = column === 0 ? 0 : column === 1 ? 50 : 100;
   const y = row === 0 ? 0 : row === 1 ? 100 / 3 : row === 2 ? 200 / 3 : 100;
   return (
@@ -874,14 +875,31 @@ function Dialogue({ lines, onComplete, backdrop }: { lines: DialogueLine[]; onCo
 }
 
 function DPad({ disabled, onMove, onInteract }: { disabled?: boolean; onMove: (dx: number, dy: number) => void; onInteract: () => void }) {
+  const holdTimer = useRef<number | null>(null);
+  const stopHold = useCallback(() => {
+    if (holdTimer.current === null) return;
+    window.clearInterval(holdTimer.current);
+    holdTimer.current = null;
+  }, []);
+  const startHold = useCallback((dx: number, dy: number) => {
+    if (disabled) return;
+    stopHold();
+    onMove(dx, dy);
+    holdTimer.current = window.setInterval(() => onMove(dx, dy), MOVEMENT_TICK_MS);
+  }, [disabled, onMove, stopHold]);
+  const keyboardMove = (event: React.MouseEvent<HTMLButtonElement>, dx: number, dy: number) => {
+    if (event.detail === 0) onMove(dx, dy);
+  };
+  useEffect(() => stopHold, [stopHold]);
+
   return (
     <div className="touch-controls">
       <div className="dpad" aria-label="移动控制">
-        <button type="button" disabled={disabled} onClick={() => onMove(0, -1)} aria-label="向上">▲</button>
-        <button type="button" disabled={disabled} onClick={() => onMove(-1, 0)} aria-label="向左">◀</button>
+        <button type="button" disabled={disabled} onPointerDown={() => startHold(0, -1)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 0, -1)} aria-label="向上">▲</button>
+        <button type="button" disabled={disabled} onPointerDown={() => startHold(-1, 0)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, -1, 0)} aria-label="向左">◀</button>
         <i />
-        <button type="button" disabled={disabled} onClick={() => onMove(1, 0)} aria-label="向右">▶</button>
-        <button type="button" disabled={disabled} onClick={() => onMove(0, 1)} aria-label="向下">▼</button>
+        <button type="button" disabled={disabled} onPointerDown={() => startHold(1, 0)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 1, 0)} aria-label="向右">▶</button>
+        <button type="button" disabled={disabled} onPointerDown={() => startHold(0, 1)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 0, 1)} aria-label="向下">▼</button>
       </div>
       <button type="button" className="interact-button" disabled={disabled} onClick={onInteract}><span>E</span>互动</button>
     </div>
@@ -1092,10 +1110,20 @@ export default function Home() {
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
   const preloadedAssetsRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const grassStepsRef = useRef(0);
+  const grassMotionTicksRef = useRef(0);
   const roadStopTimer = useRef<number | null>(null);
   const roadBumpTimer = useRef<number | null>(null);
   const homeStopTimer = useRef<number | null>(null);
   const homeBumpTimer = useRef<number | null>(null);
+  const lastRoadBumpAtRef = useRef(0);
+  const lastHomeBumpAtRef = useRef(0);
+  const heldMovementKeysRef = useRef<Set<string>>(new Set());
+  const movementTimerRef = useRef<number | null>(null);
+  const movementHandlersRef = useRef<{
+    move: (dx: number, dy: number) => void;
+    interact: () => void;
+    stop: () => void;
+  } | null>(null);
   const [berry, setBerry] = useState(true);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
@@ -1221,6 +1249,7 @@ export default function Home() {
     if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
     if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
     if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
+    if (movementTimerRef.current !== null) window.clearInterval(movementTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1340,6 +1369,12 @@ export default function Home() {
     setEncounterPending(false);
     setRouteEncounterId("wild");
     grassStepsRef.current = 0;
+    grassMotionTicksRef.current = 0;
+    heldMovementKeysRef.current.clear();
+    if (movementTimerRef.current !== null) {
+      window.clearInterval(movementTimerRef.current);
+      movementTimerRef.current = null;
+    }
     setBerry(true);
     setWildHp(32);
     setWildCalm(0);
@@ -1462,14 +1497,20 @@ export default function Home() {
 
   const moveHome = useCallback((dx: number, dy: number) => {
     if (phase !== "home" || homeStory !== null || collectionView !== null || helpOpen) return;
+    const magnitude = Math.hypot(dx, dy) || 1;
+    const unitX = dx / magnitude;
+    const unitY = dy / magnitude;
     const nextFacing: RoadFacing = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
     setHomeFacing(nextFacing);
     const next = {
-      x: homePos.x + Math.sign(dx) * HOME_STEP.x,
-      y: homePos.y + Math.sign(dy) * HOME_STEP.y,
+      x: homePos.x + unitX * HOME_STEP.x,
+      y: homePos.y + unitY * HOME_STEP.y,
     };
     if (!isHomeWalkable(next)) {
       setHomeMoving(false);
+      const now = Date.now();
+      if (now - lastHomeBumpAtRef.current < 280) return;
+      lastHomeBumpAtRef.current = now;
       setHomeBumped(true);
       setHomeToast("家具挡住了这边，从中央木地板绕过去吧。");
       playTone(115);
@@ -1481,7 +1522,7 @@ export default function Home() {
     setHomeStep((value) => value + 1);
     setHomePos(next);
     if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
-    homeStopTimer.current = window.setTimeout(() => setHomeMoving(false), 195);
+    homeStopTimer.current = window.setTimeout(() => setHomeMoving(false), MOVEMENT_TICK_MS + 55);
     const nearby = (Object.values(HOME_INTERACTIONS) as Array<(typeof HOME_INTERACTIONS)[HomeDiscovery]>).find((item) => distance(next, item.position) < 8);
     if (nearby) setHomeToast(`${nearby.hint} 靠近后按 E 调查。`);
     else if (distance(next, { x: 50, y: 84 }) < 9) setHomeToast(homeDiscoveries.length === 3 ? "东西已经收好，按 E 出发。" : "似乎还有东西没有确认。看看发光的地方。可按 E 调查。" );
@@ -1540,6 +1581,13 @@ export default function Home() {
 
   const beginRouteEncounter = useCallback((id: RouteEncounterId) => {
     const encounter = ROUTE_ENCOUNTERS[id];
+    heldMovementKeysRef.current.clear();
+    grassMotionTicksRef.current = 0;
+    if (movementTimerRef.current !== null) {
+      window.clearInterval(movementTimerRef.current);
+      movementTimerRef.current = null;
+    }
+    setRoadMoving(false);
     registerPetSightings([id]);
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
@@ -1553,16 +1601,22 @@ export default function Home() {
   }, [playTone, registerPetSightings]);
 
   const moveRoad = useCallback((dx: number, dy: number) => {
-    if (encounterPending || !activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
+    if (encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || !activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
+    const magnitude = Math.hypot(dx, dy) || 1;
+    const unitX = dx / magnitude;
+    const unitY = dy / magnitude;
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
     else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
 
     const next = {
-      x: roadPos.x + Math.sign(dx) * ROAD_STEP.x,
-      y: roadPos.y + Math.sign(dy) * ROAD_STEP.y,
+      x: roadPos.x + unitX * ROAD_STEP.x,
+      y: roadPos.y + unitY * ROAD_STEP.y,
     };
     if (!isMapWalkable(activeMap, next)) {
       setRoadMoving(false);
+      const now = Date.now();
+      if (now - lastRoadBumpAtRef.current < 280) return;
+      lastRoadBumpAtRef.current = now;
       setRoadBumped(true);
       setToast(activeMap.collisionText);
       playTone(115);
@@ -1571,12 +1625,13 @@ export default function Home() {
       return;
     }
 
-    triggerRoadMotion(dx, dy, 125);
+    triggerRoadMotion(dx, dy, MOVEMENT_TICK_MS);
     setRoadPos(next);
     const inGrass = isGrassTile(activeMap, next);
     setRoadInGrass(inGrass);
     if (!inGrass) {
       grassStepsRef.current = 0;
+      grassMotionTicksRef.current = 0;
       if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
       else setToast(activeMap.missionText);
       return;
@@ -1586,6 +1641,11 @@ export default function Home() {
       return;
     }
 
+    grassMotionTicksRef.current += 1;
+    if (grassMotionTicksRef.current % 4 !== 0) {
+      setToast(grassStepsRef.current < 3 ? "高草在脚边晃动……" : "附近传来了野生宠物的叫声！");
+      return;
+    }
     grassStepsRef.current += 1;
     const steps = grassStepsRef.current;
     const chance = steps < 3 ? 0 : Math.min(0.18 + (steps - 3) * 0.12, 0.72);
@@ -1594,7 +1654,7 @@ export default function Home() {
       grassStepsRef.current = 0;
       beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
     }
-  }, [activeMap, beginRouteEncounter, captured, collectionView, encounterPending, helpOpen, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
+  }, [activeMap, aftermathDialogueOpen, beginRouteEncounter, captured, cityDialogueOpen, collectionView, encounterPending, festivalDialogueOpen, helpOpen, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
 
   const exploreInteraction = useCallback(() => {
     if (!activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
@@ -1655,34 +1715,73 @@ export default function Home() {
   }, [encounterPending, go]);
 
   useEffect(() => {
-    if (!activeMap) return;
-    const handler = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", "e"].includes(key)) event.preventDefault();
-      if (key === "arrowup" || key === "w") moveRoad(0, -1);
-      if (key === "arrowdown" || key === "s") moveRoad(0, 1);
-      if (key === "arrowleft" || key === "a") moveRoad(-1, 0);
-      if (key === "arrowright" || key === "d") moveRoad(1, 0);
-      if (key === "e") exploreInteraction();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [activeMap, exploreInteraction, moveRoad]);
+    movementHandlersRef.current = phase === "home"
+      ? { move: moveHome, interact: interactHome, stop: () => setHomeMoving(false) }
+      : { move: moveRoad, interact: exploreInteraction, stop: () => setRoadMoving(false) };
+  }, [exploreInteraction, interactHome, moveHome, moveRoad, phase]);
 
   useEffect(() => {
-    if (phase !== "home") return;
-    const handler = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", "e"].includes(key)) event.preventDefault();
-      if (key === "arrowup" || key === "w") moveHome(0, -1);
-      if (key === "arrowdown" || key === "s") moveHome(0, 1);
-      if (key === "arrowleft" || key === "a") moveHome(-1, 0);
-      if (key === "arrowright" || key === "d") moveHome(1, 0);
-      if (key === "e") interactHome();
+    if (!activeMap && phase !== "home") return;
+    const movementKeys = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
+    const heldKeys = heldMovementKeysRef.current;
+    const tick = () => {
+      const handlers = movementHandlersRef.current;
+      if (!handlers) return;
+      const dx = (heldKeys.has("arrowright") || heldKeys.has("d") ? 1 : 0) - (heldKeys.has("arrowleft") || heldKeys.has("a") ? 1 : 0);
+      const dy = (heldKeys.has("arrowdown") || heldKeys.has("s") ? 1 : 0) - (heldKeys.has("arrowup") || heldKeys.has("w") ? 1 : 0);
+      if (dx === 0 && dy === 0) {
+        handlers.stop();
+        return;
+      }
+      handlers.move(dx, dy);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [interactHome, moveHome, phase]);
+    const stopTimer = () => {
+      if (movementTimerRef.current !== null) {
+        window.clearInterval(movementTimerRef.current);
+        movementTimerRef.current = null;
+      }
+      movementHandlersRef.current?.stop();
+    };
+    const keydown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (movementKeys.has(key)) {
+        event.preventDefault();
+        if (!heldKeys.has(key)) {
+          heldKeys.add(key);
+          tick();
+        }
+        if (movementTimerRef.current === null) movementTimerRef.current = window.setInterval(tick, MOVEMENT_TICK_MS);
+        return;
+      }
+      if (key === "e") {
+        event.preventDefault();
+        if (!event.repeat) movementHandlersRef.current?.interact();
+      }
+    };
+    const keyup = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (!movementKeys.has(key)) return;
+      event.preventDefault();
+      heldKeys.delete(key);
+      if (heldKeys.size === 0) stopTimer();
+      else tick();
+    };
+    const blur = () => {
+      heldKeys.clear();
+      stopTimer();
+    };
+    heldKeys.clear();
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    window.addEventListener("blur", blur);
+    return () => {
+      heldKeys.clear();
+      stopTimer();
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", keyup);
+      window.removeEventListener("blur", blur);
+    };
+  }, [activeMap, phase]);
 
   const captureAction = async (action: "attack" | "calm" | "ball") => {
     if (captureWon || battleBusy || !partner) return;

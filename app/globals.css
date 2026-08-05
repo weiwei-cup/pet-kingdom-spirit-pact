@@ -702,7 +702,7 @@ img {
   left: 0;
   overflow: hidden;
   transform-origin: top left;
-  transition: transform 125ms linear;
+  transition: transform 80ms linear;
   will-change: transform;
   image-rendering: pixelated;
 }
@@ -1022,7 +1022,7 @@ img {
   left: 0;
   overflow: hidden;
   transform-origin: top left;
-  transition: transform 125ms linear;
+  transition: transform 80ms linear;
   will-change: transform;
   image-rendering: pixelated;
 }
@@ -1138,7 +1138,7 @@ img {
   width: 68px;
   height: 68px;
   transform: translate(-50%, -68%);
-  transition: left 125ms linear, top 125ms linear;
+  transition: left 80ms linear, top 80ms linear;
   will-change: left, top;
   pointer-events: none;
   image-rendering: pixelated;
@@ -1168,7 +1168,11 @@ img {
 }
 
 .map-player.is-walking .map-player-shadow {
-  animation: mapFootShadow 250ms steps(2, end) infinite;
+  animation: mapFootShadow 288ms steps(2, end) infinite;
+}
+
+.map-player.is-walking .map-player-frame {
+  animation: mapPlayerFootfall 288ms steps(2, end) infinite;
 }
 
 .map-player.is-bumping {
@@ -1188,7 +1192,7 @@ img {
 .map-player.facing-left .map-companion { left: 40px; }
 .map-player.facing-up .map-companion { bottom: -10px; left: -20px; opacity: 0.94; }
 .map-player.facing-down .map-companion { bottom: 0; left: 43px; }
-.map-player.is-walking .map-companion { animation: mapCompanionTrot 250ms steps(2, end) infinite; }
+.map-player.is-walking .map-companion { animation: mapCompanionTrot 288ms steps(2, end) infinite; }
 
 .grass-foreground {
   position: absolute;
@@ -3637,6 +3641,11 @@ img {
 @keyframes mapFootShadow {
   0%, 100% { transform: translateX(-50%) scaleX(1); opacity: .52; }
   50% { transform: translateX(-50%) scaleX(.72); opacity: .34; }
+}
+
+@keyframes mapPlayerFootfall {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
 }
 
 @keyframes mapCompanionTrot {
