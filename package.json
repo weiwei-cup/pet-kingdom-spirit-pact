@@ -14,6 +14,7 @@
     "test:overworld": "node scripts/verify-overworld-engine.mjs",
     "test:adventure": "node scripts/verify-adventure-rules.mjs",
     "test:trainer": "node scripts/verify-trainer-battle.mjs",
+    "test:quests": "node scripts/verify-quest-rules.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

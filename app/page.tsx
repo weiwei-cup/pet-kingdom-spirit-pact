@@ -25,6 +25,14 @@ import {
 } from "./adventure-rules";
 import { canStandAt, integrateActorMovement, isEncounterTerrain } from "./overworld-engine";
 import { BATTLE_STATUS_LABELS, applyStatusTick, enemyAction, shouldInflictStatus, statusForElement, type BattleStatus } from "./trainer-battle-rules";
+import {
+  HIGHLAND_SIDE_QUESTS,
+  INITIAL_HIGHLAND_SIDE_QUESTS,
+  normalizeHighlandSideQuests,
+  sideQuestObjective,
+  type HighlandSideQuestId,
+  type HighlandSideQuestProgress,
+} from "./quest-rules";
 
 type Phase =
   | "title"
@@ -62,6 +70,8 @@ type WildBattleResult = "active" | "captured" | "victory" | "escaped" | "defeat"
 type TrainerBattleResult = "active" | "victory" | "defeat";
 type TrainerBattleId = "ranger" | "warden";
 type ChapterQuest = "camp" | "pass" | "pasture" | "observatory" | "complete";
+type ChapterDialogueId = "highland_arrival" | "altar_memory" | "ranger_meeting" | "pasture_echo" | "warden_truth" | "chapter_epilogue";
+type SideQuestDialogueId = "medicine_offer" | "medicine_complete" | "courier_offer" | "courier_ranger" | "courier_pasture" | "courier_warden" | "courier_complete" | "bellsheep_offer" | "bellsheep_complete";
 type HomeDiscovery = "photo" | "letter" | "breakfast";
 type HomeStoryId = "wake" | HomeDiscovery | "door";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit" | "fire" | "earth" | "lightning" | "ice";
@@ -107,6 +117,8 @@ type SaveData = {
   pastureShrines?: number[];
   observatoryNodes?: number[];
   chapterOneComplete?: boolean;
+  chapterDialoguesSeen?: ChapterDialogueId[];
+  highlandSideQuests?: HighlandSideQuestProgress;
 };
 
 type Partner = {
@@ -637,6 +649,106 @@ const AFTERMATH_LINES: DialogueLine[] = [
   { speaker: "安琪儿的残影", text: "如果你听见这段记忆，说明还有一种灵契没有被他们控制。不要把晶核交给任何人。", tone: "warning" },
 ];
 
+const CHAPTER_DIALOGUE_IDS: ChapterDialogueId[] = ["highland_arrival", "altar_memory", "ranger_meeting", "pasture_echo", "warden_truth", "chapter_epilogue"];
+
+function chapterDialogueLines(id: ChapterDialogueId, playerName: string): DialogueLine[] {
+  const lines: Record<ChapterDialogueId, DialogueLine[]> = {
+    highland_arrival: [
+      { speaker: "旁白", text: "索道越过云层时，同行宠物忽然一起望向北方。那里没有钟塔，却传来一声低沉的铃响。" },
+      { speaker: "栖川", role: "断风调查队长", text: "你就是塞其派来的新人？三天前安琪儿也到过这里。她拒绝护送，只借走一盏风灯。" },
+      { speaker: playerName, text: "学院说她带走了万灵晶核。她在这里找什么？" },
+      { speaker: "栖川", text: "一座没有铃舌、却会自己响的黑铃。昨夜它每响一次，营地的宠物就忘掉一件与主人有关的事。", tone: "warning" },
+      { speaker: "栖川", text: "先去东北祭台确认她留下的坐标。路上也问问营地的人——他们知道的，比报告里写的多。" },
+    ],
+    altar_memory: [
+      { speaker: "旁白", text: "黑铃下没有灰尘。有人最近拆开过基座，又把每一块石砖原样放了回去。" },
+      { speaker: "安琪儿的留声", role: "观测记录 07", text: "黑铃不是遗物。它在模仿宠物记忆中的声音，然后把名字从灵契里抹掉。" },
+      { speaker: "安琪儿的留声", text: "如果来的是塞其，不要继续。如果是那个没有登记灵契的孩子——去找朔，他保存着没有被学院改写的原始记录。", tone: "warning" },
+      { speaker: playerName, text: "她早就知道我会来……还是说，她只相信没有登记的灵契？" },
+      { speaker: "旁白", text: "基座内还夹着半张栈道通行证，上面写着巡风员岚绪的名字。" },
+    ],
+    ranger_meeting: [
+      { speaker: "岚绪", role: "高原巡风员", text: "安琪儿救过我的风铃羊。学院来信要我抓她，我却只收到一页没有署名的命令。" },
+      { speaker: playerName, text: "我不是来替学院抓人的。我想知道黑铃对宠物做了什么。" },
+      { speaker: "岚绪", text: "回答得很好听。但黑铃最会复制人说过的话。要过山门，就让你的三只伙伴轮流作战。" },
+      { speaker: "岚绪", text: "我看的不是输赢，是它们倒下时，你会不会记得收回它们。准备好就开始。", tone: "soft" },
+    ],
+    pasture_echo: [
+      { speaker: "旁白", text: "第三座云铃苏醒后，牧场没有立刻恢复风声。三道铃音反而拼出了一句陌生的呼唤。" },
+      { speaker: "芙禾", role: "云铃牧场守铃人", text: "那是我母亲的名字。她去世十年了，只有小时候养过的风铃羊听过这个读音。" },
+      { speaker: playerName, text: "黑铃不是凭空制造声音。它从宠物记忆里拿走了它。" },
+      { speaker: "芙禾", text: "安琪儿也这样说。她让我把三座云铃倒过来接入观测站——不是为了开门，是为了让朔看见谁在偷听。" },
+      { speaker: "旁白", text: "山顶阶梯逐级亮起。与此同时，观测站深处有人切断了最后一条通讯。", tone: "warning" },
+    ],
+    warden_truth: [
+      { speaker: "朔", role: "无籍观测员", text: "停下。安琪儿告诉我，来取记录的人会带着一份不存在的灵契。" },
+      { speaker: playerName, text: "我的伙伴没有登记，所以黑铃无法替我们改写过去。" },
+      { speaker: "朔", text: "也可能因为你根本没有过去。学院档案里，你家的照护所、推荐信，甚至你的入学编号，都像是同一天补进去的。" },
+      { speaker: playerName, text: "那就别相信档案。看它们怎么选择。" },
+      { speaker: "朔", text: "正合我意。三场接力。如果你的伙伴仍会在黑铃声中回应自己的名字，记录就交给你。", tone: "warning" },
+    ],
+    chapter_epilogue: [
+      { speaker: "朔", text: "这是完整记录。过去半年，被列为‘失踪’的宠物其实都曾自行回家——只是那些地址在地图上不存在。" },
+      { speaker: "栖川的通讯", text: "营地收到学院急令：立刻销毁观测记录，并把你带回彩虹城接受问询。" },
+      { speaker: playerName, text: "学院为什么害怕一份宠物回家的记录？" },
+      { speaker: "朔", text: "因为所有不存在的地址，都指向同一个地方：西境废弃育成所。那里在十六年前就被从王国地图上抹掉了。" },
+      { speaker: "安琪儿的留声", text: "如果你决定继续，先别急着追我。去问那些被称作‘支线’的人——被主线忽略的记忆，才最难伪造。", tone: "soft" },
+      { speaker: "旁白", text: "第一章 · 黑铃回声 完。新的坐标在观测记录背面缓慢显现。" },
+    ],
+  };
+  return lines[id];
+}
+
+function sideQuestDialogueLines(id: SideQuestDialogueId, playerName: string): DialogueLine[] {
+  const lines: Record<SideQuestDialogueId, DialogueLine[]> = {
+    medicine_offer: [
+      { speaker: "禾婶", role: "营地医师", text: "昨夜黑铃响过以后，营地几只幼宠一直高烧。普通药草压不住，得借晶角幼鹿角上的薄霜降温。" },
+      { speaker: playerName, text: "要把它带回来吗？" },
+      { speaker: "禾婶", text: "带来让我看看就好，别伤它的角。好医师和好训练师都不该为了材料毁掉一个生命。", tone: "soft" },
+    ],
+    medicine_complete: [
+      { speaker: "禾婶", text: "它愿意主动靠近药箱，说明很信任你。借一点落在草叶上的霜就够了。" },
+      { speaker: "旁白", text: "晶角幼鹿轻轻甩头，药钵覆上一层薄霜。营地幼宠的体温终于降了下来。" },
+      { speaker: "禾婶", text: "这枚晶片是在病宠项圈里发现的。黑铃响过后才出现，也许对你的调查有用。" },
+    ],
+    courier_offer: [
+      { speaker: "洛弥", role: "营地记录员", text: "学院切断了高原通讯。我有三封不能写在纸上的口信，分别给岚绪、芙禾和朔。" },
+      { speaker: playerName, text: "为什么不能写下来？" },
+      { speaker: "洛弥", text: "因为学院派来的每封信，墨迹都在第二天变成同一句话：‘一切正常’。记住这句——我们还记得第一声铃。" },
+    ],
+    courier_ranger: [
+      { speaker: playerName, text: "洛弥让我转告：我们还记得第一声铃。" },
+      { speaker: "岚绪", text: "那我回他：第一声铃之后，安琪儿救走的不是犯人，是一只被抹掉名字的宠物。" },
+      { speaker: "岚绪", text: "把下一封带给芙禾。她会告诉你，那只宠物原本想回哪里。" },
+    ],
+    courier_pasture: [
+      { speaker: playerName, text: "洛弥的第二封口信：第一声铃之后，安琪儿救走的是被抹掉名字的宠物。" },
+      { speaker: "芙禾", text: "我的回信是：它一直朝西叫。西边没有村庄，只有一座早已废弃的育成所。" },
+      { speaker: "芙禾", text: "最后一封给朔。告诉他，牧场的人还记得那座育成所。" },
+    ],
+    courier_warden: [
+      { speaker: playerName, text: "最后一封口信：牧场的人还记得那座育成所。" },
+      { speaker: "朔", text: "很好。学院可以改地图，却不能同时改掉每个人的童年。" },
+      { speaker: "朔", text: "回洛弥：把三封口信写进同一页档案，标题就叫‘大家都记得’。" },
+    ],
+    courier_complete: [
+      { speaker: "洛弥", text: "岚绪、芙禾、朔……三个人的记忆能互相印证。这一次，档案不会再被一句‘一切正常’盖过去。" },
+      { speaker: "洛弥", text: "谢谢你，口信不是跑腿。它让分散的人重新知道，自己并没有记错。", tone: "soft" },
+    ],
+    bellsheep_offer: [
+      { speaker: "芙禾", role: "牧铃人", text: "有只风铃羊一直躲在草甸，不肯回栏。我以为它受了黑铃影响，可它只是反复朝观测站叫。" },
+      { speaker: playerName, text: "我带一只愿意亲近人的风铃羊来，也许能听懂它在传什么。" },
+      { speaker: "芙禾", text: "别强抓。让它自己选择跟来——真正的口信，只有愿意回来的宠物才说得清。" },
+    ],
+    bellsheep_complete: [
+      { speaker: "旁白", text: "同行的风铃羊靠近旧围栏，颈边铃片发出三短一长的声音。草甸深处传来完全相同的回应。" },
+      { speaker: "芙禾", text: "我懂了。它不是不肯回家，是在替失踪的同伴守着回家的方向。" },
+      { speaker: "芙禾", text: "让你的伙伴继续跟着你吧。等我们把其他风铃羊接回来，我会亲自去营地报平安。", tone: "soft" },
+    ],
+  };
+  return lines[id];
+}
+
 const MEMORY_TEXT = [
   "幼年的塞其曾在雨中抱住受伤的白裂狮。",
   "黑色手套把一枚铃铛装进共鸣台下方。",
@@ -852,6 +964,7 @@ const RUPTURE_NODE_POSITIONS: Position[] = [
 ];
 
 const WIND_PASS_RANGER_POSITION: Position = { x: 55, y: 47 };
+const PASTURE_KEEPER_POSITION: Position = { x: 26, y: 72 };
 const PASTURE_SHRINE_POSITIONS: Position[] = [
   { x: 43, y: 39 },
   { x: 63, y: 68 },
@@ -1175,14 +1288,80 @@ function FieldCampModal({
   );
 }
 
+function QuestLogModal({
+  chapterDialoguesSeen,
+  highlandAltarFound,
+  highlandTrainerDefeated,
+  pastureShrines,
+  observatoryNodes,
+  chapterOneComplete,
+  sideQuests,
+  ownsFrostPet,
+  ownsBellsheep,
+  onClose,
+}: {
+  chapterDialoguesSeen: ChapterDialogueId[];
+  highlandAltarFound: boolean;
+  highlandTrainerDefeated: boolean;
+  pastureShrines: number[];
+  observatoryNodes: number[];
+  chapterOneComplete: boolean;
+  sideQuests: HighlandSideQuestProgress;
+  ownsFrostPet: boolean;
+  ownsBellsheep: boolean;
+  onClose: () => void;
+}) {
+  const mainSteps = [
+    { title: "抵达断风调查营地", detail: "向栖川了解安琪儿留下的调查路线。", done: chapterDialoguesSeen.includes("highland_arrival") },
+    { title: "聆听黑铃留声", detail: "调查断风遗迹东北方的无舌黑铃。", done: highlandAltarFound },
+    { title: "通过三宠通行试炼", detail: "让岚绪确认伙伴仍会回应自己的名字。", done: highlandTrainerDefeated },
+    { title: "唤醒三座云铃", detail: "恢复牧场与冻星观测站之间的风力回路。", done: pastureShrines.length >= 3 },
+    { title: "连接三枚紫晶节点", detail: "解除观测圆台的封锁。", done: observatoryNodes.length >= 3 },
+    { title: "取得未改写的记录", detail: "通过朔的接力战，验证未登记灵契。", done: chapterOneComplete },
+    { title: "确认下一处坐标", detail: "阅读被王国地图抹去的西境育成所记录。", done: chapterDialoguesSeen.includes("chapter_epilogue") },
+  ];
+  const sideEntries: Array<{ id: HighlandSideQuestId; unlocked: boolean; ready: boolean; maximum: number }> = [
+    { id: "frost_medicine", unlocked: true, ready: sideQuests.frost_medicine === 1 && ownsFrostPet, maximum: 2 },
+    { id: "wind_courier", unlocked: true, ready: sideQuests.wind_courier === 4, maximum: 5 },
+    { id: "lost_bellsheep", unlocked: highlandTrainerDefeated || sideQuests.lost_bellsheep > 0, ready: sideQuests.lost_bellsheep === 1 && ownsBellsheep, maximum: 2 },
+  ];
+  return (
+    <div className="modal-backdrop quest-log-backdrop" onClick={onClose}>
+      <section className="quest-log-modal" onClick={(event) => event.stopPropagation()} aria-label="任务日志">
+        <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
+        <header><small>TRAINER FIELD NOTES</small><h2>任务日志</h2><p>主线记录真相，支线记录那些不会出现在学院报告里的人。</p></header>
+        <div className="quest-log-columns">
+          <section className="main-quest-log">
+            <div className="quest-section-title"><span>MAIN STORY</span><h3>第一章 · 黑铃回声</h3><b>{mainSteps.filter((step) => step.done).length}/{mainSteps.length}</b></div>
+            <div className="quest-step-list">{mainSteps.map((step, index) => <article key={step.title} className={`${step.done ? "complete" : ""}${!step.done && mainSteps.slice(0, index).every((entry) => entry.done) ? " current" : ""}`}><i>{step.done ? "✓" : String(index + 1).padStart(2, "0")}</i><span><b>{step.title}</b><small>{step.detail}</small></span></article>)}</div>
+          </section>
+          <section className="side-quest-log">
+            <div className="quest-section-title"><span>SIDE STORIES</span><h3>东之高原委托</h3><b>{sideEntries.filter((entry) => sideQuests[entry.id] >= entry.maximum).length}/{sideEntries.length}</b></div>
+            <div className="side-quest-list">{sideEntries.map(({ id, unlocked, ready, maximum }) => {
+              const definition = HIGHLAND_SIDE_QUESTS[id];
+              const stage = sideQuests[id];
+              const complete = stage >= maximum;
+              const status = complete ? "已完成" : !unlocked ? "未发现" : stage === 0 ? "可接取" : ready ? "可提交" : "进行中";
+              return <article key={id} className={`${complete ? "complete " : ""}${ready ? "ready " : ""}${!unlocked ? "locked" : ""}`}><header><span><small>{definition.region}</small><b>{definition.title}</b></span><em>{status}</em></header><p>{unlocked ? sideQuestObjective({ id, stage, ownsFrostPet, ownsBellsheep }) : "继续推进主线并与地图上的居民交谈。"}</p><footer><span>{definition.giver}</span><small>{definition.reward}</small></footer></article>;
+            })}</div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function HighlandCampModal({
   inventory,
   partyIds,
   petProgress,
   partyHealth,
   quest,
+  sideQuests,
+  ownsFrostPet,
   onRest,
   onBuy,
+  onSideQuest,
   onReturnCity,
   onClose,
 }: {
@@ -1191,8 +1370,11 @@ function HighlandCampModal({
   petProgress: PetProgress[];
   partyHealth: Partial<Record<PetSpeciesId, number>>;
   quest: ChapterQuest;
+  sideQuests: HighlandSideQuestProgress;
+  ownsFrostPet: boolean;
   onRest: () => void;
   onBuy: (offerId: SupplyOfferId) => void;
+  onSideQuest: (id: HighlandSideQuestId) => void;
   onReturnCity: () => void;
   onClose: () => void;
 }) {
@@ -1227,6 +1409,9 @@ function HighlandCampModal({
             <h3>主线 · 黑铃回声</h3><p>{questText[quest]}</p>
             <div><span>当前调查阶段</span><b>{quest === "complete" ? "完成" : `${["camp", "pass", "pasture", "observatory"].indexOf(quest) + 1} / 4`}</b></div>
             <button type="button" onClick={onClose}>{quest === "complete" ? "继续高原探索" : "返回地图继续调查"}</button>
+            <div className="camp-quest-divider"><span>营地委托</span><i /></div>
+            <button type="button" className="camp-sidequest-button" disabled={sideQuests.frost_medicine === 1 && !ownsFrostPet || sideQuests.frost_medicine >= 2} onClick={() => onSideQuest("frost_medicine")}><span>{HIGHLAND_SIDE_QUESTS.frost_medicine.title}</span><b>{sideQuests.frost_medicine >= 2 ? "已完成" : sideQuests.frost_medicine === 0 ? "接取" : ownsFrostPet ? "提交" : "寻找霜角鹿"}</b></button>
+            <button type="button" className="camp-sidequest-button" disabled={(sideQuests.wind_courier > 0 && sideQuests.wind_courier < 4) || sideQuests.wind_courier >= 5} onClick={() => onSideQuest("wind_courier")}><span>{HIGHLAND_SIDE_QUESTS.wind_courier.title}</span><b>{sideQuests.wind_courier >= 5 ? "已完成" : sideQuests.wind_courier === 0 ? "接取" : sideQuests.wind_courier === 4 ? "提交" : `${sideQuests.wind_courier - 1}/3 口信`}</b></button>
             <button type="button" className="camp-return-button" onClick={onReturnCity}>搭乘索道返回彩虹学院</button>
           </section>
         </div>
@@ -1268,9 +1453,14 @@ function BattleEffects({ fx }: { fx: BattleFx | null }) {
 
 function Dialogue({ lines, onComplete, backdrop }: { lines: DialogueLine[]; onComplete: () => void; backdrop?: React.ReactNode }) {
   const [index, setIndex] = useState(0);
+  const completedRef = useRef(false);
   const line = lines[index];
   const next = useCallback(() => {
-    if (index >= lines.length - 1) onComplete();
+    if (index >= lines.length - 1) {
+      if (completedRef.current) return;
+      completedRef.current = true;
+      onComplete();
+    }
     else setIndex((current) => current + 1);
   }, [index, lines.length, onComplete]);
 
@@ -1759,6 +1949,7 @@ export default function Home() {
   const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
   const [fieldCampOpen, setFieldCampOpen] = useState(false);
   const [highlandCampOpen, setHighlandCampOpen] = useState(false);
+  const [questLogOpen, setQuestLogOpen] = useState(false);
   const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
   const [storedPetIds, setStoredPetIds] = useState<PetSpeciesId[]>([]);
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
@@ -1792,6 +1983,10 @@ export default function Home() {
   const [pastureShrines, setPastureShrines] = useState<number[]>([]);
   const [observatoryNodes, setObservatoryNodes] = useState<number[]>([]);
   const [chapterOneComplete, setChapterOneComplete] = useState(false);
+  const [chapterDialoguesSeen, setChapterDialoguesSeen] = useState<ChapterDialogueId[]>([]);
+  const [chapterDialogue, setChapterDialogue] = useState<ChapterDialogueId | null>(null);
+  const [sideQuestDialogue, setSideQuestDialogue] = useState<SideQuestDialogueId | null>(null);
+  const [highlandSideQuests, setHighlandSideQuests] = useState<HighlandSideQuestProgress>({ ...INITIAL_HIGHLAND_SIDE_QUESTS });
   const [battleReturnPhase, setBattleReturnPhase] = useState<BattleReturnPhase>("road");
   const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1928,9 +2123,11 @@ export default function Home() {
       pastureShrines,
       observatoryNodes,
       chapterOneComplete,
+      chapterDialoguesSeen,
+      highlandSideQuests,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [activePetId, battleReturnPhase, captured, chapterOneComplete, chapterQuest, fieldResearch, highlandAltarFound, highlandTrainerDefeated, homeDiscoveries, inventory, observatoryNodes, ownedPetIds, partnerId, partyHealth, pastureShrines, petProgress, phase, playerName, prologueComplete, routeEncounterId, seenPetIds, storedPetIds]);
+  }, [activePetId, battleReturnPhase, captured, chapterDialoguesSeen, chapterOneComplete, chapterQuest, fieldResearch, highlandAltarFound, highlandSideQuests, highlandTrainerDefeated, homeDiscoveries, inventory, observatoryNodes, ownedPetIds, partnerId, partyHealth, pastureShrines, petProgress, phase, playerName, prologueComplete, routeEncounterId, seenPetIds, storedPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -2058,7 +2255,8 @@ export default function Home() {
   const enterHighland = useCallback(() => {
     setPrologueComplete(true);
     enterExploration("highland");
-  }, [enterExploration]);
+    if (!chapterDialoguesSeen.includes("highland_arrival")) setChapterDialogue("highland_arrival");
+  }, [chapterDialoguesSeen, enterExploration]);
 
   const startTrainerBattle = useCallback((battleId: TrainerBattleId) => {
     const definition = TRAINER_BATTLES[battleId];
@@ -2092,6 +2290,62 @@ export default function Home() {
     go("trainerBattle");
   }, [go, ownedPetIds, partyHealth, petProgress, playTone, registerPetSightings]);
 
+  const completeChapterDialogue = useCallback(() => {
+    if (!chapterDialogue) return;
+    const completed = chapterDialogue;
+    setChapterDialoguesSeen((current) => current.includes(completed) ? current : [...current, completed]);
+    setChapterDialogue(null);
+    if (completed === "highland_arrival") {
+      setHighlandCampOpen(true);
+      setToast("营地里出现了新的居民委托。可从任务日志随时追踪。 ");
+    }
+    if (completed === "ranger_meeting") startTrainerBattle("ranger");
+    if (completed === "warden_truth") startTrainerBattle("warden");
+    if (completed === "chapter_epilogue") setToast("观测记录指向西境废弃育成所。高原支线仍可继续完成。 ");
+  }, [chapterDialogue, startTrainerBattle]);
+
+  const completeSideQuestDialogue = useCallback(() => {
+    if (!sideQuestDialogue) return;
+    const completed = sideQuestDialogue;
+    setSideQuestDialogue(null);
+    if (completed === "medicine_offer") setHighlandSideQuests((current) => ({ ...current, frost_medicine: Math.max(1, current.frost_medicine) }));
+    if (completed === "medicine_complete") {
+      setHighlandSideQuests((current) => ({ ...current, frost_medicine: 2 }));
+      setInventory((current) => ({ ...current, coins: current.coins + 180, berries: current.berries + 3, crystals: current.crystals + 1 }));
+      setToast("支线完成：获得 180 金币、3 份莓果与 1 枚灵契晶片。 ");
+    }
+    if (completed === "courier_offer") setHighlandSideQuests((current) => ({ ...current, wind_courier: Math.max(1, current.wind_courier) }));
+    if (completed === "courier_ranger") setHighlandSideQuests((current) => ({ ...current, wind_courier: Math.max(2, current.wind_courier) }));
+    if (completed === "courier_pasture") setHighlandSideQuests((current) => ({ ...current, wind_courier: Math.max(3, current.wind_courier) }));
+    if (completed === "courier_warden") setHighlandSideQuests((current) => ({ ...current, wind_courier: Math.max(4, current.wind_courier) }));
+    if (completed === "courier_complete") {
+      setHighlandSideQuests((current) => ({ ...current, wind_courier: 5 }));
+      setInventory((current) => ({ ...current, coins: current.coins + 260, capsules: current.capsules + 3, crystals: current.crystals + 2 }));
+      setToast("支线完成：获得 260 金币、3 枚召唤胶囊与 2 枚灵契晶片。 ");
+    }
+    if (completed === "bellsheep_offer") setHighlandSideQuests((current) => ({ ...current, lost_bellsheep: Math.max(1, current.lost_bellsheep) }));
+    if (completed === "bellsheep_complete") {
+      setHighlandSideQuests((current) => ({ ...current, lost_bellsheep: 2 }));
+      setInventory((current) => ({ ...current, coins: current.coins + 220, berries: current.berries + 2, crystals: current.crystals + 2 }));
+      setToast("支线完成：获得 220 金币、2 份莓果与 2 枚灵契晶片。 ");
+    }
+    playTone(completed.endsWith("complete") ? 880 : 610);
+  }, [playTone, sideQuestDialogue]);
+
+  const openCampSideQuest = useCallback((id: HighlandSideQuestId) => {
+    if (id === "frost_medicine") {
+      if (highlandSideQuests.frost_medicine === 0) setSideQuestDialogue("medicine_offer");
+      else if (highlandSideQuests.frost_medicine === 1 && mergePetIds(ownedPetIds, storedPetIds).includes("frost")) setSideQuestDialogue("medicine_complete");
+      else return;
+    }
+    if (id === "wind_courier") {
+      if (highlandSideQuests.wind_courier === 0) setSideQuestDialogue("courier_offer");
+      else if (highlandSideQuests.wind_courier === 4) setSideQuestDialogue("courier_complete");
+      else return;
+    }
+    setHighlandCampOpen(false);
+  }, [highlandSideQuests, ownedPetIds, storedPetIds]);
+
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
     setPlayerName("小澈");
@@ -2101,6 +2355,7 @@ export default function Home() {
     setCollectionView(null);
     setFieldCampOpen(false);
     setHighlandCampOpen(false);
+    setQuestLogOpen(false);
     setOwnedPetIds([]);
     setStoredPetIds([]);
     setSeenPetIds([]);
@@ -2136,6 +2391,10 @@ export default function Home() {
     setPastureShrines([]);
     setObservatoryNodes([]);
     setChapterOneComplete(false);
+    setChapterDialoguesSeen([]);
+    setChapterDialogue(null);
+    setSideQuestDialogue(null);
+    setHighlandSideQuests({ ...INITIAL_HIGHLAND_SIDE_QUESTS });
     setBattleReturnPhase("road");
     grassStepsRef.current = 0;
     grassTravelDistanceRef.current = 0;
@@ -2230,9 +2489,14 @@ export default function Home() {
       setPastureShrines((saved.pastureShrines ?? []).filter((value) => Number.isInteger(value) && value >= 0 && value < PASTURE_SHRINE_POSITIONS.length));
       setObservatoryNodes((saved.observatoryNodes ?? []).filter((value) => Number.isInteger(value) && value >= 0 && value < OBSERVATORY_NODE_POSITIONS.length));
       setChapterOneComplete(Boolean(saved.chapterOneComplete));
+      setChapterDialoguesSeen((saved.chapterDialoguesSeen ?? []).filter((id): id is ChapterDialogueId => CHAPTER_DIALOGUE_IDS.includes(id as ChapterDialogueId)));
+      setChapterDialogue(null);
+      setSideQuestDialogue(null);
+      setHighlandSideQuests(normalizeHighlandSideQuests(saved.highlandSideQuests));
       setBattleReturnPhase(["road", "highland", "windPass", "pasture", "observatory"].includes(saved.battleReturnPhase ?? "") ? saved.battleReturnPhase as BattleReturnPhase : "road");
       setFieldCampOpen(false);
       setHighlandCampOpen(false);
+      setQuestLogOpen(false);
       const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
       setHomePos(HOME_START);
       homePositionLiveRef.current = HOME_START;
@@ -2493,7 +2757,7 @@ export default function Home() {
   }, [activeMap, playTone]);
 
   const exploreInteraction = useCallback((position: Position) => {
-    if (!activeMap || !mapAssetReady || collectionView !== null || fieldCampOpen || highlandCampOpen || helpOpen) return;
+    if (!activeMap || !mapAssetReady || collectionView !== null || fieldCampOpen || highlandCampOpen || questLogOpen || chapterDialogue || sideQuestDialogue || helpOpen) return;
     roadPositionLiveRef.current = position;
     setRoadPos(position);
     if (phase === "road" && distance(position, ROAD_START) < 9) {
@@ -2554,7 +2818,8 @@ export default function Home() {
       return;
     }
     if (phase === "highland" && distance(position, activeMap.start) < 9) {
-      setHighlandCampOpen(true);
+      if (!chapterDialoguesSeen.includes("highland_arrival")) setChapterDialogue("highland_arrival");
+      else setHighlandCampOpen(true);
       setToast("断风调查营地可以治疗全队、补充物资或搭乘索道返回学院。");
       playTone(610);
       return;
@@ -2563,6 +2828,8 @@ export default function Home() {
       if (!highlandAltarFound) {
         setHighlandAltarFound(true);
         setChapterQuest("pass");
+        setChapterDialoguesSeen((current) => current.includes("altar_memory") ? current : [...current, "altar_memory"]);
+        setChapterDialogue("altar_memory");
         setInventory((current) => ({ ...current, coins: current.coins + 160, crystals: current.crystals + 3 }));
         setToast("在黑铃基座下发现了安琪儿留下的坐标。获得 160 金币与 3 枚灵契晶片。");
         playTone(880);
@@ -2577,7 +2844,12 @@ export default function Home() {
       return;
     }
     if (phase === "windPass" && distance(position, WIND_PASS_RANGER_POSITION) < 8) {
-      if (!highlandTrainerDefeated) startTrainerBattle("ranger");
+      if (!highlandTrainerDefeated) {
+        if (!chapterDialoguesSeen.includes("ranger_meeting")) {
+          setChapterDialoguesSeen((current) => [...current, "ranger_meeting"]);
+          setChapterDialogue("ranger_meeting");
+        } else startTrainerBattle("ranger");
+      } else if (highlandSideQuests.wind_courier === 1) setSideQuestDialogue("courier_ranger");
       else setToast("岚绪：山门已经为你开放。去云铃牧场调查三座石铃吧。");
       return;
     }
@@ -2593,12 +2865,21 @@ export default function Home() {
       return;
     }
     if (phase === "pasture") {
+      if (distance(position, PASTURE_KEEPER_POSITION) < 8) {
+        if (highlandSideQuests.wind_courier === 2) setSideQuestDialogue("courier_pasture");
+        else if (highlandSideQuests.lost_bellsheep === 0) setSideQuestDialogue("bellsheep_offer");
+        else if (highlandSideQuests.lost_bellsheep === 1 && mergePetIds(ownedPetIds, storedPetIds).includes("breeze")) setSideQuestDialogue("bellsheep_complete");
+        else setToast(highlandSideQuests.lost_bellsheep >= 2 ? "芙禾：它们已经开始沿着铃声回家了。" : "芙禾：别追得太急。让风铃羊自己决定是否靠近。 ");
+        return;
+      }
       const shrine = PASTURE_SHRINE_POSITIONS.findIndex((shrinePosition, index) => !pastureShrines.includes(index) && distance(position, shrinePosition) < 8);
       if (shrine >= 0) {
         const next = [...pastureShrines, shrine];
         setPastureShrines(next);
         if (next.length === PASTURE_SHRINE_POSITIONS.length) {
           setChapterQuest("observatory");
+          setChapterDialoguesSeen((current) => current.includes("pasture_echo") ? current : [...current, "pasture_echo"]);
+          setChapterDialogue("pasture_echo");
           setInventory((current) => ({ ...current, berries: current.berries + 2, crystals: current.crystals + 1 }));
           setToast("三座云铃同时回应，观测站阶梯重新亮起。获得 2 份莓果与 1 枚灵契晶片。");
           playTone(880);
@@ -2631,10 +2912,17 @@ export default function Home() {
       }
       if (distance(position, activeMap.interaction) < 9) {
         if (chapterOneComplete) {
-          setToast("朔已经离开。圆台上保留着安琪儿的下一组观测坐标。");
+          if (!chapterDialoguesSeen.includes("chapter_epilogue")) {
+            setChapterDialoguesSeen((current) => [...current, "chapter_epilogue"]);
+            setChapterDialogue("chapter_epilogue");
+          } else if (highlandSideQuests.wind_courier === 3) setSideQuestDialogue("courier_warden");
+          else setToast("朔留在圆台旁整理记录。安琪儿的下一组坐标仍在显现。");
         } else if (observatoryNodes.length < OBSERVATORY_NODE_POSITIONS.length) {
           setToast(`圆台仍被封锁。还需连接 ${OBSERVATORY_NODE_POSITIONS.length - observatoryNodes.length} 枚紫晶节点。`);
           playTone(150);
+        } else if (!chapterDialoguesSeen.includes("warden_truth")) {
+          setChapterDialoguesSeen((current) => [...current, "warden_truth"]);
+          setChapterDialogue("warden_truth");
         } else startTrainerBattle("warden");
         return;
       }
@@ -2649,7 +2937,7 @@ export default function Home() {
     if (phase === "windPass") setToast("沿石路寻找中央栈道的巡风员岚绪。通过三宠试炼才能打开山门。");
     if (phase === "pasture") setToast("靠近尚未回应的云铃后按 E。银蓝草甸里会出现稀有宠物。");
     if (phase === "observatory") setToast("连接左右回廊与中央阶梯旁的三枚紫晶节点。");
-  }, [activeMap, captured, chapterOneComplete, collectionView, enterExploration, enterHighland, fieldCampOpen, fieldResearch, go, helpOpen, highlandAltarFound, highlandCampOpen, highlandTrainerDefeated, mapAssetReady, observatoryNodes, pastureShrines, phase, playTone, prologueComplete, ruptureNodes, startTrainerBattle]);
+  }, [activeMap, captured, chapterDialogue, chapterDialoguesSeen, chapterOneComplete, collectionView, enterExploration, enterHighland, fieldCampOpen, fieldResearch, go, helpOpen, highlandAltarFound, highlandCampOpen, highlandSideQuests, highlandTrainerDefeated, mapAssetReady, observatoryNodes, ownedPetIds, pastureShrines, phase, playTone, prologueComplete, questLogOpen, ruptureNodes, sideQuestDialogue, startTrainerBattle, storedPetIds]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -3156,10 +3444,11 @@ export default function Home() {
           <div className="hud-actions">
             {partner && <div className="adventure-wallet" aria-label="训练师背包资源"><span>金<b>{inventory.coins}</b></span><span>球<b>{inventory.capsules}</b></span><span>果<b>{inventory.berries}</b></span><span>晶<b>{inventory.crystals}</b></span></div>}
             {partner && <div className="partner-chip"><PetSprite id={partner.id} size="sm" /><span><small>{partner.kind}</small><b>{partner.name}</b></span></div>}
-            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("bag"); }} aria-label="打开宠物背包"><b>包</b><small>{ownedPetIds.length}/6</small></button>}
-            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("dex"); }} aria-label="打开宠物图鉴"><b>鉴</b><small>{seenPetIds.length}/{PET_SPECIES_ORDER.length}</small></button>}
+            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setQuestLogOpen(false); setCollectionView("bag"); }} aria-label="打开宠物背包"><b>包</b><small>{ownedPetIds.length}/6</small></button>}
+            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setQuestLogOpen(false); setCollectionView("dex"); }} aria-label="打开宠物图鉴"><b>鉴</b><small>{seenPetIds.length}/{PET_SPECIES_ORDER.length}</small></button>}
+            {partner && prologueComplete && <button type="button" className="icon-button collection-button quest-button" onClick={() => { setHelpOpen(false); setCollectionView(null); setQuestLogOpen(true); }} aria-label="打开任务日志"><b>任</b><small>{Object.values(highlandSideQuests).filter((stage, index) => stage >= [2, 5, 2][index]).length}/3</small></button>}
             <button type="button" className="icon-button" onClick={() => setSoundOn((value) => !value)} aria-label={soundOn ? "关闭音效" : "开启音效"}>{soundOn ? "♪" : "×"}</button>
-            <button type="button" className="icon-button" onClick={() => { setCollectionView(null); setHelpOpen(true); }} aria-label="打开帮助">?</button>
+            <button type="button" className="icon-button" onClick={() => { setCollectionView(null); setQuestLogOpen(false); setHelpOpen(true); }} aria-label="打开帮助">?</button>
           </div>
         </header>
       )}
@@ -3309,7 +3598,7 @@ export default function Home() {
             { label: "继续探索", done: false },
           ]}
           mapReady={mapAssetReady}
-          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || fieldCampOpen || highlandCampOpen || helpOpen}
+          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || chapterDialogue !== null || sideQuestDialogue !== null || collectionView !== null || fieldCampOpen || highlandCampOpen || questLogOpen || helpOpen}
           onMapReady={setLoadedMapId}
           markers={<>
             {phase === "road" && <>
@@ -3335,23 +3624,24 @@ export default function Home() {
               <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>记忆祭台</span><i>按 E</i></button>
             </>}
             {phase === "highland" && <>
-              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>断风调查营地</span><i>治疗 / 补给</i></button>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>断风调查营地</span><i>治疗 / 委托</i></button>
               <button type="button" className="map-landmark rift-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{highlandAltarFound ? "黑铃坐标 · 风蚀栈道" : "黑铃祭台"}</span><i>按 E</i></button>
             </>}
             {phase === "windPass" && <>
               <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回断风遗迹</span><i>按 E</i></button>
-              <button type="button" className={`map-landmark npc-landmark${highlandTrainerDefeated ? "" : " landmark-ready"}`} style={{ left: `${WIND_PASS_RANGER_POSITION.x}%`, top: `${WIND_PASS_RANGER_POSITION.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>巡风员 · 岚绪</span><i>{highlandTrainerDefeated ? "试炼完成" : "三宠试炼"}</i></button>
+              <button type="button" className={`map-landmark npc-landmark${!highlandTrainerDefeated || highlandSideQuests.wind_courier === 1 ? " landmark-ready" : ""}`} style={{ left: `${WIND_PASS_RANGER_POSITION.x}%`, top: `${WIND_PASS_RANGER_POSITION.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>巡风员 · 岚绪</span><i>{!highlandTrainerDefeated ? "三宠试炼" : highlandSideQuests.wind_courier === 1 ? "口信待送" : "试炼完成"}</i></button>
               <button type="button" className={`map-landmark gate-landmark${highlandTrainerDefeated ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>云铃牧场山门</span><i>{highlandTrainerDefeated ? "可进入" : "需要许可"}</i></button>
             </>}
             {phase === "pasture" && <>
               <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回风蚀栈道</span><i>按 E</i></button>
+              <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${PASTURE_KEEPER_POSITION.x}%`, top: `${PASTURE_KEEPER_POSITION.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>牧铃人 · 芙禾</span><i>{highlandSideQuests.wind_courier === 2 ? "口信待送" : highlandSideQuests.lost_bellsheep === 0 ? "有委托" : highlandSideQuests.lost_bellsheep === 1 ? "寻找风铃羊" : "牧场守铃"}</i></button>
               {PASTURE_SHRINE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${pastureShrines.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><i>{pastureShrines.includes(index) ? "✓" : "铃"}</i><span>{pastureShrines.includes(index) ? "已回应" : `云铃 ${index + 1}`}</span></button>)}
               <button type="button" className={`map-landmark gate-landmark${pastureShrines.length === 3 ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>冻星观测站</span><i>{pastureShrines.length === 3 ? "回路已恢复" : `${pastureShrines.length}/3 云铃`}</i></button>
             </>}
             {phase === "observatory" && <>
               <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回云铃牧场</span><i>按 E</i></button>
               {OBSERVATORY_NODE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${observatoryNodes.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><i>{observatoryNodes.includes(index) ? "✓" : "◆"}</i><span>{observatoryNodes.includes(index) ? "已连接" : `紫晶 ${index + 1}`}</span></button>)}
-              <button type="button" className={`map-landmark rift-landmark${observatoryNodes.length === 3 ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{chapterOneComplete ? "观测记录 · 已取得" : "圆形观测台"}</span><i>{chapterOneComplete ? "第一章完成" : `${observatoryNodes.length}/3 回路`}</i></button>
+              <button type="button" className={`map-landmark rift-landmark${observatoryNodes.length === 3 ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{chapterOneComplete ? "观测员朔 · 圆形观测台" : "圆形观测台"}</span><i>{chapterOneComplete ? highlandSideQuests.wind_courier === 3 ? "口信待送" : "观测记录已取得" : `${observatoryNodes.length}/3 回路`}</i></button>
             </>}
           </>}
           onPosition={handleRoadPosition}
@@ -3460,7 +3750,13 @@ export default function Home() {
                 setPartyHealth((current) => ({ ...current, ...recovered }));
                 enterExploration("highland");
                 setHighlandCampOpen(true);
-              } else go(trainerDefinition.background);
+              } else {
+                go(trainerDefinition.background);
+                if (trainerBattleId === "warden" && !chapterDialoguesSeen.includes("chapter_epilogue")) {
+                  setChapterDialoguesSeen((current) => [...current, "chapter_epilogue"]);
+                  setChapterDialogue("chapter_epilogue");
+                }
+              }
             }}><span>{trainerBattleResult === "victory" ? (trainerBattleId === "warden" ? "带着观测记录返回圆台" : "穿过山门继续调查") : "返回断风营地休整"}</span><b>›</b></button>}
           </div>
         </section>
@@ -3576,11 +3872,37 @@ export default function Home() {
           petProgress={petProgress}
           partyHealth={partyHealth}
           quest={chapterQuest}
+          sideQuests={highlandSideQuests}
+          ownsFrostPet={mergePetIds(ownedPetIds, storedPetIds).includes("frost")}
           onRest={healPartyAtCamp}
           onBuy={purchaseSupply}
+          onSideQuest={openCampSideQuest}
           onReturnCity={() => { setHighlandCampOpen(false); go("city"); }}
           onClose={() => setHighlandCampOpen(false)}
         />
+      )}
+
+      {questLogOpen && (
+        <QuestLogModal
+          chapterDialoguesSeen={chapterDialoguesSeen}
+          highlandAltarFound={highlandAltarFound}
+          highlandTrainerDefeated={highlandTrainerDefeated}
+          pastureShrines={pastureShrines}
+          observatoryNodes={observatoryNodes}
+          chapterOneComplete={chapterOneComplete}
+          sideQuests={highlandSideQuests}
+          ownsFrostPet={mergePetIds(ownedPetIds, storedPetIds).includes("frost")}
+          ownsBellsheep={mergePetIds(ownedPetIds, storedPetIds).includes("breeze")}
+          onClose={() => setQuestLogOpen(false)}
+        />
+      )}
+
+      {chapterDialogue && (
+        <Dialogue lines={chapterDialogueLines(chapterDialogue, playerName)} onComplete={completeChapterDialogue} backdrop={<div className="chapter-dialogue-bg"><i /><i /><i /><div><span>BLACK BELL RECORD</span><b>东之高原调查档案</b></div></div>} />
+      )}
+
+      {sideQuestDialogue && (
+        <Dialogue lines={sideQuestDialogueLines(sideQuestDialogue, playerName)} onComplete={completeSideQuestDialogue} backdrop={<div className="sidequest-dialogue-bg"><i /><i /><div><span>SIDE STORY</span><b>那些没有写进报告的人</b></div></div>} />
       )}
 
       {helpOpen && (
@@ -3588,7 +3910,7 @@ export default function Home() {
           <section className="help-modal" onClick={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setHelpOpen(false)} aria-label="关闭">×</button>
             <small>TRAINER HANDBOOK</small><h2>旅行手册</h2>
-            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、营地、发光物体或人物。</p></div><div><kbd>队伍</kbd><b>六宠接力</b><p>野外战可随时换宠；一只倒下后由其他同行伙伴接替。</p></div><div><kbd>仓库</kbd><b>调度伙伴</b><p>队伍满员后新宠自动寄存，可在宠物背包中随时调整。</p></div><div><kbd>进化</kbd><b>灵契晶片</b><p>达到指定等级后消耗晶片进化，全面提高五项能力。</p></div><div><kbd>高原</kbd><b>第一章区域</b><p>通关序章后从学院北门前往，拥有独立宠物生态。</p></div></div>
+            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、营地、发光物体或人物。</p></div><div><kbd>队伍</kbd><b>六宠接力</b><p>野外战可随时换宠；一只倒下后由其他同行伙伴接替。</p></div><div><kbd>任务</kbd><b>主线与支线</b><p>推进高原剧情后，可在顶部“任”按钮追踪全部目标。</p></div><div><kbd>仓库</kbd><b>调度伙伴</b><p>队伍满员后新宠自动寄存，可在宠物背包中随时调整。</p></div><div><kbd>进化</kbd><b>灵契晶片</b><p>达到指定等级后消耗晶片进化，全面提高五项能力。</p></div></div>
             <p className="help-note">宠物拥有四个技能槽。等级、攻防、属性克制、全队体力、安抚程度与剩余物资都会影响野外战结果。</p>
           </section>
         </div>

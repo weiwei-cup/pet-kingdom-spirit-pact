@@ -54,6 +54,16 @@ for (const route of routes) {
   assert.equal(hasRoute(route), true, `${route.map} must have a traversable route from start to goal`);
 }
 
+const narrativeTargets = [
+  { map: "windPass", start: { x: 18, y: 91 }, goal: { x: 55, y: 47 }, radius: 7, label: "ranger 岚绪" },
+  { map: "pasture", start: { x: 9, y: 89 }, goal: { x: 26, y: 72 }, radius: 7, label: "keeper 芙禾" },
+];
+
+for (const target of narrativeTargets) {
+  assert.equal(canStandAt(target.map, target.goal), true, `${target.label} must stand on walkable terrain`);
+  assert.equal(hasRoute(target), true, `${target.label} must be reachable from the map entrance`);
+}
+
 for (const y of [80, 78, 76, 74, 72, 70, 68]) {
   assert.equal(canStandAt("road", { x: 45, y }), true, `road central stairs must be open at y=${y}`);
 }
@@ -86,4 +96,4 @@ assert.equal(wallSlide.blockedX, true);
 assert.equal(wallSlide.position.x < 50, true, "substeps must prevent tunneling through walls");
 assert.equal(wallSlide.position.y > 40, true, "free axis must keep sliding along a wall");
 
-console.log(`Overworld verification passed: ${routes.length} maps, stairs, grass, collision substeps.`);
+console.log(`Overworld verification passed: ${routes.length} maps, ${narrativeTargets.length} narrative NPC routes, stairs, grass, collision substeps.`);
