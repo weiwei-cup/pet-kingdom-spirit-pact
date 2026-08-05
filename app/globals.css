@@ -882,6 +882,99 @@ img {
   user-select: none;
   pointer-events: none;
   image-rendering: pixelated;
+  opacity: 0;
+}
+
+.rpg-map-image.is-ready {
+  opacity: 1;
+}
+
+.field-screen.map-loading .map-player,
+.field-screen.map-loading .map-landmark,
+.field-screen.map-loading .map-character-marker,
+.field-screen.map-loading .spirit-map-node {
+  visibility: hidden;
+}
+
+.map-loading-overlay {
+  position: absolute;
+  z-index: 28;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  overflow: hidden;
+  color: #f9e9b8;
+  background:
+    linear-gradient(rgba(11, 35, 39, 0.93), rgba(8, 27, 32, 0.97)),
+    repeating-linear-gradient(135deg, #143c3f 0 16px, #173437 16px 32px);
+  image-rendering: pixelated;
+}
+
+.map-loading-overlay::before,
+.map-loading-overlay::after {
+  content: "";
+  position: absolute;
+  width: 38vw;
+  height: 38vw;
+  border: 3px solid rgba(213, 181, 91, 0.12);
+  transform: rotate(45deg);
+}
+
+.map-loading-overlay::before { top: -28vw; left: -13vw; }
+.map-loading-overlay::after { right: -13vw; bottom: -28vw; }
+
+.map-loading-overlay > i {
+  position: relative;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  border: 6px solid #315f59;
+  border-top-color: #efd06f;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px #102c31, 4px 4px 0 rgba(3, 17, 20, 0.58);
+  animation: mapLoadingSpin 800ms steps(8, end) infinite;
+}
+
+.map-loading-overlay.has-error > i {
+  border-color: #9a504b;
+  border-top-color: #ffd17b;
+  animation: none;
+}
+
+.map-loading-overlay strong,
+.map-loading-overlay p,
+.map-loading-overlay button {
+  position: relative;
+  z-index: 1;
+}
+
+.map-loading-overlay strong {
+  color: #ffe28c;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-shadow: 2px 2px 0 #142b30;
+}
+
+.map-loading-overlay p {
+  margin: 0;
+  color: #9fc6b8;
+  font-size: 8px;
+}
+
+.map-loading-overlay button {
+  margin-top: 8px;
+  padding: 8px 15px;
+  border: 3px solid #e2bd62;
+  color: #ffe79a;
+  background: #173f42;
+  box-shadow: 4px 4px 0 #071a1e;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .map-player {
@@ -1406,6 +1499,15 @@ img {
   color: #ffe59b;
   background: rgba(16, 50, 55, 0.93);
   box-shadow: 2px 2px 0 #071820;
+}
+
+.dpad button:disabled,
+.interact-button:disabled {
+  color: #79928d;
+  border-color: #4c6e69;
+  background: rgba(15, 39, 43, 0.86);
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .dpad button:nth-child(1) { grid-column: 2; }
@@ -2770,6 +2872,10 @@ img {
 @keyframes mapBump {
   0%, 100% { margin: 0; filter: none; }
   50% { margin: 2px 0 0 -3px; filter: brightness(1.22); }
+}
+
+@keyframes mapLoadingSpin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes grassRustle {

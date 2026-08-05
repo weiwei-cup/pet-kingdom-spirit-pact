@@ -261,6 +261,19 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
   },
 };
 
+const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
+  name: [SCENE_ART.road],
+  shelter: [SCENE_ART.road],
+  road: [SCENE_ART.city],
+  capture: [SCENE_ART.city],
+  city: [SCENE_ART.exam],
+  exam: [SCENE_ART.festival],
+  festival: [SCENE_ART.rupture],
+  rupture: [SCENE_ART.boss],
+  boss: [SCENE_ART.aftermath],
+  aftermath: [SCENE_ART.ending],
+};
+
 const RUPTURE_NODE_POSITIONS: Position[] = [
   { x: 19, y: 36 },
   { x: 81, y: 38 },
@@ -415,17 +428,17 @@ function Dialogue({ lines, onComplete, backdrop }: { lines: DialogueLine[]; onCo
   );
 }
 
-function DPad({ onMove, onInteract }: { onMove: (dx: number, dy: number) => void; onInteract: () => void }) {
+function DPad({ disabled, onMove, onInteract }: { disabled?: boolean; onMove: (dx: number, dy: number) => void; onInteract: () => void }) {
   return (
     <div className="touch-controls">
       <div className="dpad" aria-label="移动控制">
-        <button type="button" onClick={() => onMove(0, -1)} aria-label="向上">▲</button>
-        <button type="button" onClick={() => onMove(-1, 0)} aria-label="向左">◀</button>
+        <button type="button" disabled={disabled} onClick={() => onMove(0, -1)} aria-label="向上">▲</button>
+        <button type="button" disabled={disabled} onClick={() => onMove(-1, 0)} aria-label="向左">◀</button>
         <i />
-        <button type="button" onClick={() => onMove(1, 0)} aria-label="向右">▶</button>
-        <button type="button" onClick={() => onMove(0, 1)} aria-label="向下">▼</button>
+        <button type="button" disabled={disabled} onClick={() => onMove(1, 0)} aria-label="向右">▶</button>
+        <button type="button" disabled={disabled} onClick={() => onMove(0, 1)} aria-label="向下">▼</button>
       </div>
-      <button type="button" className="interact-button" onClick={onInteract}><span>E</span>互动</button>
+      <button type="button" className="interact-button" disabled={disabled} onClick={onInteract}><span>E</span>互动</button>
     </div>
   );
 }
@@ -447,6 +460,8 @@ function ExplorationScene({
   missionText,
   missionItems,
   markers,
+  mapReady,
+  onMapReady,
   onMove,
   onInteract,
 }: {
@@ -466,11 +481,25 @@ function ExplorationScene({
   missionText: string;
   missionItems: Array<{ label: string; done?: boolean }>;
   markers?: React.ReactNode;
+  mapReady: boolean;
+  onMapReady: (mapId: ExplorationPhase) => void;
   onMove: (dx: number, dy: number) => void;
   onInteract: () => void;
 }) {
+  const [mapLoadError, setMapLoadError] = useState(false);
+  const [mapLoadAttempt, setMapLoadAttempt] = useState(0);
+  const mapSource = mapLoadAttempt === 0
+    ? map.image
+    : `${map.image}${map.image.includes("?") ? "&" : "?"}retry=${mapLoadAttempt}`;
+
+  const handleMapLoaded = (image: HTMLImageElement) => {
+    setMapLoadError(false);
+    const decoding = typeof image.decode === "function" ? image.decode() : Promise.resolve();
+    void decoding.catch(() => undefined).finally(() => onMapReady(map.id));
+  };
+
   return (
-    <section className={`field-screen area-${map.id}`}>
+    <section className={`field-screen area-${map.id} ${mapReady ? "map-ready" : "map-loading"}`} aria-busy={!mapReady}>
       <div className="mission-card">
         <small>{map.name}</small><h3>{missionTitle}</h3><p>{missionText}</p>
         <div className="mission-items">
@@ -479,7 +508,14 @@ function ExplorationScene({
       </div>
       <div className="field-world" ref={fieldViewportRef} aria-label={`${map.name}可探索地图`}>
         <div className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
-          <img className="rpg-map-image" src={map.image} alt={map.name} draggable={false} />
+          <img
+            className={`rpg-map-image${mapReady ? " is-ready" : ""}`}
+            src={mapSource}
+            alt={map.name}
+            draggable={false}
+            onLoad={(event) => handleMapLoaded(event.currentTarget)}
+            onError={() => setMapLoadError(true)}
+          />
           {markers}
           <div className={`map-player facing-${roadFacing}${roadMoving ? " is-walking" : ""}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}>
             <i className="map-player-shadow" aria-hidden="true" />
@@ -489,9 +525,19 @@ function ExplorationScene({
           </div>
         </div>
       </div>
+      {!mapReady && (
+        <div className={`map-loading-overlay${mapLoadError ? " has-error" : ""}`} role="status" aria-live="polite">
+          <i aria-hidden="true" />
+          <strong>{mapLoadError ? "地图载入失败" : `正在进入${map.name}`}</strong>
+          <p>{mapLoadError ? "场景资源没有成功抵达，请重新载入。" : "正在同步地图画面与可通行区域……"}</p>
+          {mapLoadError && (
+            <button type="button" onClick={() => { setMapLoadError(false); setMapLoadAttempt((attempt) => attempt + 1); }}>重新载入</button>
+          )}
+        </div>
+      )}
       {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
       <div className="field-toast"><span>{roadInGrass ? "草" : map.id === "rupture" ? "契" : map.id === "aftermath" ? "忆" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
-      <DPad onMove={onMove} onInteract={onInteract} />
+      <DPad disabled={!mapReady} onMove={onMove} onInteract={onInteract} />
       <span className="map-control-hint">WASD / 方向键移动 · E 互动</span>
     </section>
   );
@@ -517,10 +563,12 @@ export default function Home() {
   const [roadStep, setRoadStep] = useState(0);
   const [roadBumped, setRoadBumped] = useState(false);
   const [roadInGrass, setRoadInGrass] = useState(false);
+  const [loadedMapId, setLoadedMapId] = useState<ExplorationPhase | null>(null);
   const [fieldSize, setFieldSize] = useState<Size>({ width: 1280, height: 720 });
   const [encounterPending, setEncounterPending] = useState(false);
   const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
+  const preloadedAssetsRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const grassStepsRef = useRef(0);
   const roadStopTimer = useRef<number | null>(null);
   const roadBumpTimer = useRef<number | null>(null);
@@ -552,6 +600,7 @@ export default function Home() {
   const activeMap = (["road", "city", "festival", "rupture", "aftermath"] as Phase[]).includes(phase)
     ? EXPLORATION_MAPS[phase as ExplorationPhase]
     : null;
+  const mapAssetReady = activeMap !== null && loadedMapId === activeMap.id;
 
   const mapCamera = useMemo(() => {
     const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
@@ -588,6 +637,16 @@ export default function Home() {
     const save: SaveData = { phase, playerName, partnerId, captured };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   }, [captured, partnerId, phase, playerName]);
+
+  useEffect(() => {
+    for (const source of SCENE_PRELOADS[phase] ?? []) {
+      if (preloadedAssetsRef.current.has(source)) continue;
+      const image = new Image();
+      image.decoding = "async";
+      image.src = source;
+      preloadedAssetsRef.current.set(source, image);
+    }
+  }, [phase]);
 
   useEffect(() => () => {
     if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
@@ -645,7 +704,9 @@ export default function Home() {
   }, [playTone]);
 
   const prepareExplorationMap = useCallback((next: Phase) => {
-    if (!(next in EXPLORATION_MAPS) || next === "road") return;
+    if (!(next in EXPLORATION_MAPS)) return;
+    setLoadedMapId(null);
+    if (next === "road") return;
     const map = EXPLORATION_MAPS[next as ExplorationPhase];
     setRoadPos(map.start);
     setRoadFacing("up");
@@ -678,6 +739,7 @@ export default function Home() {
     setRoadStep(0);
     setRoadBumped(false);
     setRoadInGrass(false);
+    setLoadedMapId(null);
     setEncounterPending(false);
     setRouteEncounterId("wild");
     grassStepsRef.current = 0;
@@ -749,7 +811,7 @@ export default function Home() {
   }, [playTone]);
 
   const moveRoad = useCallback((dx: number, dy: number) => {
-    if (encounterPending || !activeMap) return;
+    if (encounterPending || !activeMap || !mapAssetReady) return;
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
     else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
 
@@ -790,10 +852,10 @@ export default function Home() {
       grassStepsRef.current = 0;
       beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
     }
-  }, [activeMap, beginRouteEncounter, captured, encounterPending, phase, playTone, roadPos, triggerRoadMotion]);
+  }, [activeMap, beginRouteEncounter, captured, encounterPending, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
 
   const exploreInteraction = useCallback(() => {
-    if (!activeMap) return;
+    if (!activeMap || !mapAssetReady) return;
     if (phase === "road" && distance(roadPos, activeMap.interaction) < 8) {
       if (!captured) {
         setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
@@ -839,7 +901,7 @@ export default function Home() {
     if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
-  }, [activeMap, captured, go, phase, playTone, roadPos, ruptureNodes]);
+  }, [activeMap, captured, go, mapAssetReady, phase, playTone, roadPos, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -1092,6 +1154,7 @@ export default function Home() {
 
       {activeMap && partner && (
         <ExplorationScene
+          key={activeMap.id}
           map={activeMap}
           mapCamera={mapCamera}
           fieldViewportRef={fieldViewportRef}
@@ -1124,6 +1187,8 @@ export default function Home() {
             { label: "绕开破碎万灵晶核", done: roadPos.y < 58 },
             { label: "抵达上方记忆祭台" },
           ]}
+          mapReady={mapAssetReady}
+          onMapReady={setLoadedMapId}
           markers={<>
             {phase === "road" && <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>}
             {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
