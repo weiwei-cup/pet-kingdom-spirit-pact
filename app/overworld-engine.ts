@@ -20,6 +20,23 @@ const TERRAIN_ZONES: Partial<Record<OverworldMapId, TerrainRect[]>> = {
     { x1: 57, y1: 56, x2: 83, y2: 78, kind: "grass" },
     { x1: 64, y1: 16, x2: 75, y2: 27, kind: "grass" },
   ],
+  windPass: [
+    { x1: 38, y1: 26, x2: 53, y2: 40, kind: "grass" },
+    { x1: 37, y1: 47, x2: 51, y2: 61, kind: "grass" },
+    { x1: 70, y1: 69, x2: 86, y2: 84, kind: "grass" },
+  ],
+  pasture: [
+    { x1: 36, y1: 10, x2: 54, y2: 23, kind: "grass" },
+    { x1: 76, y1: 29, x2: 91, y2: 44, kind: "grass" },
+    { x1: 55, y1: 46, x2: 72, y2: 59, kind: "grass" },
+    { x1: 48, y1: 79, x2: 66, y2: 91, kind: "grass" },
+  ],
+  observatory: [
+    { x1: 20, y1: 23, x2: 34, y2: 41, kind: "grass" },
+    { x1: 68, y1: 31, x2: 83, y2: 48, kind: "grass" },
+    { x1: 34, y1: 53, x2: 45, y2: 68, kind: "grass" },
+    { x1: 64, y1: 71, x2: 78, y2: 87, kind: "grass" },
+  ],
 };
 
 const decodedTerrain = new Map<OverworldMapId, Uint8Array>();

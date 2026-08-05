@@ -20,6 +20,9 @@ const routes = [
   { map: "rupture", start: { x: 11, y: 88 }, goal: { x: 50, y: 13 }, radius: 9 },
   { map: "aftermath", start: { x: 50, y: 92 }, goal: { x: 50, y: 18 }, radius: 9 },
   { map: "highland", start: { x: 17, y: 84 }, goal: { x: 81, y: 20 }, radius: 7 },
+  { map: "windPass", start: { x: 18, y: 91 }, goal: { x: 78, y: 20 }, radius: 7 },
+  { map: "pasture", start: { x: 9, y: 89 }, goal: { x: 78, y: 20 }, radius: 8 },
+  { map: "observatory", start: { x: 50, y: 91 }, goal: { x: 50, y: 19 }, radius: 9 },
 ];
 
 function hasRoute({ map, start, goal, radius }) {
@@ -62,6 +65,15 @@ assert.equal(terrainAt("road", { x: 16.7, y: 84.4 }), "ground");
 assert.equal(isEncounterTerrain("city", { x: 50, y: 91 }), false);
 for (const position of [{ x: 28, y: 38 }, { x: 67, y: 66 }]) {
   assert.equal(isEncounterTerrain("highland", position), true, `highland scrub must trigger encounters at ${JSON.stringify(position)}`);
+}
+for (const [map, positions] of Object.entries({
+  windPass: [{ x: 44, y: 34 }, { x: 43, y: 54 }, { x: 78, y: 76 }],
+  pasture: [{ x: 44, y: 17 }, { x: 82, y: 36 }, { x: 63, y: 53 }],
+  observatory: [{ x: 31, y: 27 }, { x: 71, y: 41 }, { x: 39, y: 59 }],
+})) {
+  for (const position of positions) {
+    assert.equal(isEncounterTerrain(map, position), true, `${map} encounter zone must be reachable at ${JSON.stringify(position)}`);
+  }
 }
 
 const wallSlide = integrateActorMovement({

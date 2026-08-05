@@ -174,6 +174,118 @@ const maps = [
       [97, 0, 100, 100],
     ],
   },
+  {
+    id: "windPass",
+    source: "public/pixel/map-wind-pass.webp",
+    start: [18, 91],
+    goals: [[78, 20, 7], [55, 47, 8]],
+    floor: ({ r, g, b }) => {
+      const goldenGround = r > 104 && g > 72 && b < 116 && r > b * 1.1 && g > b * 0.78;
+      const palePath = r > 122 && g > 99 && b < 135 && r > b * 1.05;
+      return goldenGround || palePath;
+    },
+    forceWalkable: [
+      { circle: [18, 91, 5] },
+      { circle: [55, 47, 3.5] },
+      { circle: [78, 20, 4] },
+      { polygon: [[8, 96], [13, 88], [25, 77], [34, 79], [28, 87], [20, 96]] },
+      { polygon: [[27, 82], [31, 75], [45, 66], [49, 72], [36, 84]] },
+      { polygon: [[58, 51], [63, 45], [75, 48], [72, 55]] },
+    ],
+    forceBlocked: [
+      { ellipse: [23, 20, 11, 11] },
+      { ellipse: [9, 76, 7, 9] },
+      [0, 0, 100, 3],
+      [0, 97, 100, 100],
+      [0, 0, 3, 100],
+      [97, 0, 100, 100],
+    ],
+  },
+  {
+    id: "pasture",
+    source: "public/pixel/map-cloudbell-pasture.webp",
+    start: [9, 89],
+    goals: [[78, 20, 8], [43, 39, 7], [63, 68, 7], [68, 36, 7]],
+    floor: ({ r, g, b, light, spread }) => {
+      const meadow = g > 88 && g > r * 1.01 && g > b * 1.06 && light > 77;
+      const earth = r > 132 && g > 111 && b < 145 && r > b * 1.02;
+      const paleStone = light > 118 && spread < 58 && g >= b * 0.9;
+      const silverGrass = r > 100 && g > 115 && b > 130 && b > r * 1.03 && spread < 75;
+      return meadow || earth || paleStone || silverGrass;
+    },
+    forceWalkable: [
+      { circle: [9, 89, 2.3] },
+      { circle: [78, 20, 3.5] },
+      { circle: [43, 39, 2.1] },
+      { circle: [63, 68, 2.1] },
+      { circle: [68, 36, 2.1] },
+      { polygon: [[6, 94], [12, 96], [28, 76], [24, 69], [17, 72]] },
+      { polygon: [[22, 68], [35, 66], [48, 70], [47, 78], [30, 76]] },
+      { polygon: [[38, 72], [42, 68], [48, 70], [46, 76]] },
+      { polygon: [[42, 51], [45, 47], [51, 49], [49, 55]] },
+      { polygon: [[43, 68], [55, 57], [69, 48], [75, 30], [87, 9], [91, 14], [82, 35], [75, 55], [60, 65], [49, 74]] },
+      { polygon: [[39, 52], [48, 52], [49, 29], [41, 27], [37, 39]] },
+    ],
+    forceBlocked: [
+      { polygon: [[17, 3], [31, 3], [31, 25], [25, 39], [31, 48], [38, 49], [38, 55], [29, 53], [21, 42], [17, 25]] },
+      { polygon: [[47, 53], [54, 53], [52, 67], [48, 72], [48, 96], [40, 96], [43, 73], [47, 66]] },
+      { ellipse: [21, 43, 6, 8] },
+      { ellipse: [28, 69, 5, 7] },
+      { ellipse: [65, 42, 5, 7] },
+      { ellipse: [69, 28, 5, 7] },
+      { ellipse: [84, 8, 5, 6] },
+      [0, 0, 100, 3],
+      [0, 97, 100, 100],
+      [0, 0, 3, 100],
+      [97, 0, 100, 100],
+    ],
+    forceWalkableAfter: [
+      // Main worn trails: start loop, both bridges, central square and observatory stairs.
+      { polygon: [[4, 96], [12, 96], [25, 81], [38, 75], [40, 79], [27, 86], [15, 97]] },
+      { polygon: [[24, 82], [38, 76], [49, 69], [57, 68], [57, 73], [45, 76], [34, 83]] },
+      { polygon: [[25, 83], [20, 75], [16, 65], [21, 58], [30, 54], [36, 57], [25, 63], [27, 72], [34, 78]] },
+      { polygon: [[30, 56], [38, 52], [45, 47], [52, 49], [48, 55], [40, 58]] },
+      { polygon: [[46, 51], [53, 43], [65, 37], [74, 28], [80, 17], [84, 19], [81, 31], [70, 43], [56, 50]] },
+      { polygon: [[38, 72], [42, 68], [48, 70], [46, 76]] },
+      { polygon: [[42, 51], [45, 47], [51, 49], [49, 55]] },
+    ],
+  },
+  {
+    id: "observatory",
+    source: "public/pixel/map-froststar-observatory.webp",
+    start: [50, 91],
+    goals: [[50, 19, 9], [21, 58, 7], [50, 55, 7], [79, 58, 7]],
+    floor: ({ r, g, b, light, spread }) => {
+      const stone = light > 62 && light < 176 && spread < 62 && b >= g * 0.94 && b >= r * 0.86;
+      const litFloor = light > 80 && b > 66 && r > 55 && r >= g * 0.92;
+      return stone || litFloor;
+    },
+    forceWalkable: [
+      { circle: [50, 91, 2.5] },
+      { circle: [50, 19, 2.5] },
+      { circle: [21, 58, 2.2] },
+      { circle: [50, 55, 2.2] },
+      { circle: [79, 58, 2.2] },
+      [46, 67, 54, 94],
+      [46, 43, 54, 70],
+      [43, 28, 57, 45],
+    ],
+    forceBlocked: [
+      [0, 4, 29, 25],
+      [71, 4, 100, 25],
+      { polygon: [[0, 20], [21, 20], [29, 33], [24, 46], [0, 48]] },
+      { polygon: [[100, 20], [79, 20], [71, 33], [76, 46], [100, 48]] },
+      { ellipse: [73, 13, 8, 11] },
+      { ellipse: [44, 9, 5, 7] },
+      { ellipse: [53, 7, 5, 6] },
+      [0, 0, 100, 4],
+      [0, 96, 100, 100],
+      [0, 0, 4, 100],
+      [96, 0, 100, 100],
+      { ellipse: [34, 48, 5.2, 7] },
+      { ellipse: [66, 48, 5.2, 7] },
+    ],
+  },
 ];
 
 function insideShape(x, y, shape) {
@@ -198,6 +310,16 @@ function insideShape(x, y, shape) {
     if (angle < 0) angle += 360;
     const normalizedThickness = thickness / Math.min(radiusX, radiusY);
     return Math.abs(radius - 1) <= normalizedThickness && angle >= startAngle && angle <= endAngle;
+  }
+  if (shape.polygon) {
+    let inside = false;
+    for (let index = 0, previous = shape.polygon.length - 1; index < shape.polygon.length; previous = index, index += 1) {
+      const [x1, y1] = shape.polygon[index];
+      const [x2, y2] = shape.polygon[previous];
+      const crosses = (y1 > y) !== (y2 > y) && x < ((x2 - x1) * (y - y1)) / (y2 - y1) + x1;
+      if (crosses) inside = !inside;
+    }
+    return inside;
   }
   return false;
 }
@@ -320,6 +442,7 @@ async function buildMap(map) {
   }
   for (const shape of map.forceWalkable ?? []) setShape(candidate, shape, 1);
   for (const shape of map.forceBlocked ?? []) setShape(candidate, shape, 0);
+  for (const shape of map.forceWalkableAfter ?? []) setShape(candidate, shape, 1);
   const connected = floodFromStart(candidate, map.start);
 
   if (PREVIEW_DIR) {

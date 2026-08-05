@@ -24,6 +24,7 @@ import {
   type SupplyOfferId,
 } from "./adventure-rules";
 import { canStandAt, integrateActorMovement, isEncounterTerrain } from "./overworld-engine";
+import { BATTLE_STATUS_LABELS, applyStatusTick, enemyAction, shouldInflictStatus, statusForElement, type BattleStatus } from "./trainer-battle-rules";
 
 type Phase =
   | "title"
@@ -39,6 +40,10 @@ type Phase =
   | "boss"
   | "aftermath"
   | "highland"
+  | "windPass"
+  | "pasture"
+  | "observatory"
+  | "trainerBattle"
   | "ending";
 
 type PartnerId = "leaf" | "metal" | "tide";
@@ -50,10 +55,13 @@ type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "a
 type Position = { x: number; y: number };
 type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
-type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath" | "highland";
-type BattleReturnPhase = "road" | "highland";
+type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath" | "highland" | "windPass" | "pasture" | "observatory";
+type BattleReturnPhase = "road" | "highland" | "windPass" | "pasture" | "observatory";
 type CollectionView = "bag" | "storage" | "dex";
 type WildBattleResult = "active" | "captured" | "victory" | "escaped" | "defeat";
+type TrainerBattleResult = "active" | "victory" | "defeat";
+type TrainerBattleId = "ranger" | "warden";
+type ChapterQuest = "camp" | "pass" | "pasture" | "observatory" | "complete";
 type HomeDiscovery = "photo" | "letter" | "breakfast";
 type HomeStoryId = "wake" | HomeDiscovery | "door";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit" | "fire" | "earth" | "lightning" | "ice";
@@ -93,6 +101,12 @@ type SaveData = {
   prologueComplete?: boolean;
   highlandAltarFound?: boolean;
   battleReturnPhase?: BattleReturnPhase;
+  partyHealth?: Partial<Record<PetSpeciesId, number>>;
+  chapterQuest?: ChapterQuest;
+  highlandTrainerDefeated?: boolean;
+  pastureShrines?: number[];
+  observatoryNodes?: number[];
+  chapterOneComplete?: boolean;
 };
 
 type Partner = {
@@ -138,6 +152,19 @@ type RouteEncounter = {
   kind: string;
   level: number;
   maxHp: number;
+};
+
+type TrainerPet = { id: PetSpeciesId; level: number };
+type TrainerBattleDefinition = {
+  id: TrainerBattleId;
+  trainerName: string;
+  trainerRole: string;
+  title: string;
+  description: string;
+  team: TrainerPet[];
+  rewardCoins: number;
+  rewardExperience: number;
+  background: ExplorationPhase;
 };
 
 type ExplorationMapDefinition = {
@@ -463,11 +490,12 @@ function isPetSpeciesId(value: unknown): value is PetSpeciesId {
 
 function storySightingsForPhase(phase: Phase) {
   const sightings = [...STARTER_SIGHTINGS];
-  if (["exam", "festival", "rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("bird", "breeze");
-  if (["festival", "rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("ember", "spark");
-  if (["rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("frost", "lantern");
-  if (["aftermath", "ending", "highland"].includes(phase)) sightings.push("moss");
-  if (["boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("guardian");
+  const chapterPhases: Phase[] = ["highland", "windPass", "pasture", "observatory", "trainerBattle"];
+  if (["exam", "festival", "rupture", "boss", "aftermath", "ending", ...chapterPhases].includes(phase)) sightings.push("bird", "breeze");
+  if (["festival", "rupture", "boss", "aftermath", "ending", ...chapterPhases].includes(phase)) sightings.push("ember", "spark");
+  if (["rupture", "boss", "aftermath", "ending", ...chapterPhases].includes(phase)) sightings.push("frost", "lantern");
+  if (["aftermath", "ending", ...chapterPhases].includes(phase)) sightings.push("moss");
+  if (["boss", "aftermath", "ending", ...chapterPhases].includes(phase)) sightings.push("guardian");
   return sightings;
 }
 
@@ -573,6 +601,10 @@ const SCENE_ART: Record<Phase, string> = {
   boss: "./pixel/spirit-sanctum.webp?v=2",
   aftermath: "./pixel/map-spirit-temple.webp?v=4",
   highland: "./pixel/map-east-highland.webp?v=4",
+  windPass: "./pixel/map-wind-pass.webp?v=1",
+  pasture: "./pixel/map-cloudbell-pasture.webp?v=1",
+  observatory: "./pixel/map-froststar-observatory.webp?v=1",
+  trainerBattle: "./pixel/map-wind-pass.webp?v=1",
   ending: "./pixel/map-east-highland.webp?v=4",
 };
 
@@ -622,12 +654,53 @@ const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
   breeze: { id: "breeze", name: "风铃羊", kind: "飞行系", level: 7, maxHp: 44 },
 };
 
+const TRAINER_BATTLES: Record<TrainerBattleId, TrainerBattleDefinition> = {
+  ranger: {
+    id: "ranger",
+    trainerName: "岚绪",
+    trainerRole: "高原巡风员",
+    title: "栈道通行试炼",
+    description: "岚绪会根据体力选择防守，并连续派出三只高原宠物。",
+    team: [{ id: "breeze", level: 8 }, { id: "frost", level: 9 }, { id: "spark", level: 9 }],
+    rewardCoins: 180,
+    rewardExperience: 130,
+    background: "windPass",
+  },
+  warden: {
+    id: "warden",
+    trainerName: "朔",
+    trainerRole: "无籍观测员",
+    title: "黑铃观测记录",
+    description: "朔拒绝交出安琪儿的记录。击败他的三宠队伍，证明你的灵契不会被黑铃控制。",
+    team: [{ id: "lantern", level: 12 }, { id: "frost", level: 12 }, { id: "guardian", level: 14 }],
+    rewardCoins: 360,
+    rewardExperience: 260,
+    background: "observatory",
+  },
+};
+
 function isRouteEncounterId(value: unknown): value is RouteEncounterId {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(ROUTE_ENCOUNTERS, value);
 }
 
 function randomRouteEncounter(mapId: BattleReturnPhase): RouteEncounterId {
   const roll = Math.random();
+  if (mapId === "windPass") {
+    if (roll < 0.48) return "breeze";
+    if (roll < 0.78) return "spark";
+    return "frost";
+  }
+  if (mapId === "pasture") {
+    if (roll < 0.52) return "breeze";
+    if (roll < 0.72) return "bird";
+    if (roll < 0.91) return "frost";
+    return "lantern";
+  }
+  if (mapId === "observatory") {
+    if (roll < 0.46) return "frost";
+    if (roll < 0.76) return "spark";
+    return "lantern";
+  }
   if (mapId === "highland") {
     if (roll < 0.46) return "breeze";
     if (roll < 0.84) return "frost";
@@ -721,6 +794,36 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionText: "从调查营地出发，穿过两座悬空石桥，前往东北方的黑铃祭台。",
     collisionText: "云海、悬崖、石墙和遗迹残柱都无法通行。",
   },
+  windPass: {
+    id: "windPass",
+    image: SCENE_ART.windPass,
+    name: "东之高原 · 风蚀栈道",
+    start: { x: 18, y: 91 },
+    interaction: { x: 78, y: 20 },
+    missionTitle: "穿越风蚀栈道",
+    missionText: "沿悬崖石路通过巡风员的三宠试炼，再从东北山门进入云铃牧场。",
+    collisionText: "这里是云海、峭壁、围墙或遗迹装饰，不能通行。",
+  },
+  pasture: {
+    id: "pasture",
+    image: SCENE_ART.pasture,
+    name: "东之高原 · 云铃牧场",
+    start: { x: 9, y: 89 },
+    interaction: { x: 78, y: 20 },
+    missionTitle: "唤醒三座牧场风铃",
+    missionText: "穿过溪流与银蓝草甸，依次调查三座石铃，再前往山顶观测站。",
+    collisionText: "溪流、瀑布、悬崖、围栏、树木和建筑都不能穿越。",
+  },
+  observatory: {
+    id: "observatory",
+    image: SCENE_ART.observatory,
+    name: "东之高原 · 冻星观测站",
+    start: { x: 50, y: 91 },
+    interaction: { x: 50, y: 19 },
+    missionTitle: "重新连接观测回路",
+    missionText: "从左右回廊激活三枚紫晶节点，解除圆形观测台的封锁。",
+    collisionText: "破损墙体、虚空、机械、残柱与坍塌地面无法通行。",
+  },
 };
 
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
@@ -735,13 +838,29 @@ const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
   rupture: [SCENE_ART.boss],
   boss: [SCENE_ART.aftermath],
   aftermath: [SCENE_ART.ending, SCENE_ART.highland, PET_ART.frost, PET_ART.lantern, PET_ART.breeze],
-  highland: [SCENE_ART.city],
+  highland: [SCENE_ART.city, SCENE_ART.windPass],
+  windPass: [SCENE_ART.pasture, PET_ART.spark, PET_ART.breeze, PET_ART.frost],
+  pasture: [SCENE_ART.observatory, PET_ART.bird, PET_ART.lantern],
+  observatory: [PET_ART.guardian],
+  trainerBattle: [SCENE_ART.windPass, SCENE_ART.observatory],
 };
 
 const RUPTURE_NODE_POSITIONS: Position[] = [
   { x: 19, y: 36 },
   { x: 81, y: 38 },
   { x: 50, y: 74 },
+];
+
+const WIND_PASS_RANGER_POSITION: Position = { x: 55, y: 47 };
+const PASTURE_SHRINE_POSITIONS: Position[] = [
+  { x: 43, y: 39 },
+  { x: 63, y: 68 },
+  { x: 68, y: 36 },
+];
+const OBSERVATORY_NODE_POSITIONS: Position[] = [
+  { x: 21, y: 58 },
+  { x: 50, y: 55 },
+  { x: 79, y: 58 },
 ];
 
 function inMapRect(position: Position, rect: MapRect) {
@@ -1049,6 +1168,66 @@ function FieldCampModal({
             <div><span>完成捕捉</span><b>{Math.min(research.capturedPets, FIELD_RESEARCH_REQUIREMENTS.captures)} / {FIELD_RESEARCH_REQUIREMENTS.captures}</b></div>
             <button type="button" disabled={!researchReady || research.claimed} onClick={onClaim}>{research.claimed ? "报酬已领取" : researchReady ? "提交记录 · 领取报酬" : "调查尚未完成"}</button>
             <small>报酬：金币 120 · 召唤胶囊 3 · 香甜莓果 2 · 灵契晶片 2</small>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function HighlandCampModal({
+  inventory,
+  partyIds,
+  petProgress,
+  partyHealth,
+  quest,
+  onRest,
+  onBuy,
+  onReturnCity,
+  onClose,
+}: {
+  inventory: AdventureInventory;
+  partyIds: PetSpeciesId[];
+  petProgress: PetProgress[];
+  partyHealth: Partial<Record<PetSpeciesId, number>>;
+  quest: ChapterQuest;
+  onRest: () => void;
+  onBuy: (offerId: SupplyOfferId) => void;
+  onReturnCity: () => void;
+  onClose: () => void;
+}) {
+  const questText: Record<ChapterQuest, string> = {
+    camp: "调查东北方黑铃祭台，确认安琪儿留下的坐标。",
+    pass: "沿黑铃坐标进入风蚀栈道，寻找冻星观测站。",
+    pasture: "通过巡风员岚绪的三宠试炼，前往云铃牧场。",
+    observatory: "唤醒牧场三座石铃，恢复观测站的风力回路。",
+    complete: "观测记录已经取回。第一章调查完成，可继续收集与培养宠物。",
+  };
+  return (
+    <div className="modal-backdrop field-camp-backdrop" onClick={onClose}>
+      <section className="field-camp-modal highland-camp-modal" onClick={(event) => event.stopPropagation()} aria-label="断风调查营地">
+        <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
+        <header><small>GALEBREAK EXPEDITION CAMP</small><h2>断风调查营地</h2><p>高原巡逻员会治疗同行宠物，也能补充远行物资。</p></header>
+        <div className="camp-wallet"><span>持有金币</span><b>{inventory.coins}</b><i>胶囊 {inventory.capsules}</i><i>莓果 {inventory.berries}</i><i>灵契晶片 {inventory.crystals}</i></div>
+        <div className="camp-layout">
+          <section className="camp-shop camp-party-care">
+            <h3>同行队伍 · 免费休整</h3>
+            <div className="camp-party-list">{partyIds.map((id) => {
+              const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+              const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+              const hp = partyHealth[id] ?? maximum;
+              return <div key={id}><PetSprite id={id} size="sm" /><span><b>{petDisplayName(id, progress)}</b><small>Lv.{progress.level} · {hp}/{maximum}</small><Meter value={hp} max={maximum} /></span></div>;
+            })}</div>
+            <button type="button" onClick={onRest}><span><b>全队休整</b><small>恢复全部同行宠物的体力并清除异常状态</small></span><em>免费</em></button>
+            {(Object.entries(SUPPLY_OFFERS) as Array<[SupplyOfferId, (typeof SUPPLY_OFFERS)[SupplyOfferId]]>).map(([id, offer]) => (
+              <button type="button" key={id} disabled={inventory.coins < offer.price} onClick={() => onBuy(id)}><span><b>{offer.name}</b><small>{offer.description}</small></span><em>{offer.price} 金币</em></button>
+            ))}
+          </section>
+          <section className="camp-research is-ready">
+            <h3>主线 · 黑铃回声</h3><p>{questText[quest]}</p>
+            <div><span>当前调查阶段</span><b>{quest === "complete" ? "完成" : `${["camp", "pass", "pasture", "observatory"].indexOf(quest) + 1} / 4`}</b></div>
+            <button type="button" onClick={onClose}>{quest === "complete" ? "继续高原探索" : "返回地图继续调查"}</button>
+            <button type="button" className="camp-return-button" onClick={onReturnCity}>搭乘索道返回彩虹学院</button>
           </section>
         </div>
       </section>
@@ -1579,6 +1758,7 @@ export default function Home() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
   const [fieldCampOpen, setFieldCampOpen] = useState(false);
+  const [highlandCampOpen, setHighlandCampOpen] = useState(false);
   const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
   const [storedPetIds, setStoredPetIds] = useState<PetSpeciesId[]>([]);
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
@@ -1606,6 +1786,12 @@ export default function Home() {
   const [fieldResearch, setFieldResearch] = useState<FieldResearch>({ ...INITIAL_FIELD_RESEARCH });
   const [prologueComplete, setPrologueComplete] = useState(false);
   const [highlandAltarFound, setHighlandAltarFound] = useState(false);
+  const [partyHealth, setPartyHealth] = useState<Partial<Record<PetSpeciesId, number>>>({});
+  const [chapterQuest, setChapterQuest] = useState<ChapterQuest>("camp");
+  const [highlandTrainerDefeated, setHighlandTrainerDefeated] = useState(false);
+  const [pastureShrines, setPastureShrines] = useState<number[]>([]);
+  const [observatoryNodes, setObservatoryNodes] = useState<number[]>([]);
+  const [chapterOneComplete, setChapterOneComplete] = useState(false);
   const [battleReturnPhase, setBattleReturnPhase] = useState<BattleReturnPhase>("road");
   const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1626,6 +1812,15 @@ export default function Home() {
   const [wildPartyHp, setWildPartyHp] = useState<Partial<Record<PetSpeciesId, number>>>({});
   const [battlePartyOpen, setBattlePartyOpen] = useState(false);
   const [captureLog, setCaptureLog] = useState("茸角鼠被荆棘缠住，正警惕地望着你。");
+  const [trainerBattleId, setTrainerBattleId] = useState<TrainerBattleId>("ranger");
+  const [trainerBattleResult, setTrainerBattleResult] = useState<TrainerBattleResult>("active");
+  const [trainerEnemyIndex, setTrainerEnemyIndex] = useState(0);
+  const [trainerEnemyHp, setTrainerEnemyHp] = useState(1);
+  const [trainerPartyHp, setTrainerPartyHp] = useState<Partial<Record<PetSpeciesId, number>>>({});
+  const [trainerPlayerStatus, setTrainerPlayerStatus] = useState<BattleStatus | null>(null);
+  const [trainerEnemyStatus, setTrainerEnemyStatus] = useState<BattleStatus | null>(null);
+  const [trainerPartyOpen, setTrainerPartyOpen] = useState(false);
+  const [trainerLog, setTrainerLog] = useState("巡风员正在检查你的队伍。");
   const [cityDialogueOpen, setCityDialogueOpen] = useState(false);
   const [festivalDialogueOpen, setFestivalDialogueOpen] = useState(false);
   const [aftermathDialogueOpen, setAftermathDialogueOpen] = useState(false);
@@ -1665,7 +1860,11 @@ export default function Home() {
     support: secondaryBattleSkill?.name ?? primaryBattleSkill?.name ?? "守护姿态",
   } : null;
   const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
-  const activeMap = (["road", "city", "festival", "rupture", "aftermath", "highland"] as Phase[]).includes(phase)
+  const trainerDefinition = TRAINER_BATTLES[trainerBattleId];
+  const trainerEnemyPet = trainerDefinition.team[Math.min(trainerEnemyIndex, trainerDefinition.team.length - 1)];
+  const trainerEnemySpecies = PET_SPECIES[trainerEnemyPet.id];
+  const trainerEnemyStats = scaledPetStats(trainerEnemySpecies, trainerEnemyPet.level);
+  const activeMap = (["road", "city", "festival", "rupture", "aftermath", "highland", "windPass", "pasture", "observatory"] as Phase[]).includes(phase)
     ? EXPLORATION_MAPS[phase as ExplorationPhase]
     : null;
   const mapAssetReady = activeMap !== null && loadedMapId === activeMap.id;
@@ -1723,9 +1922,15 @@ export default function Home() {
       prologueComplete,
       highlandAltarFound,
       battleReturnPhase,
+      partyHealth,
+      chapterQuest,
+      highlandTrainerDefeated,
+      pastureShrines,
+      observatoryNodes,
+      chapterOneComplete,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [activePetId, battleReturnPhase, captured, fieldResearch, highlandAltarFound, homeDiscoveries, inventory, ownedPetIds, partnerId, petProgress, phase, playerName, prologueComplete, routeEncounterId, seenPetIds, storedPetIds]);
+  }, [activePetId, battleReturnPhase, captured, chapterOneComplete, chapterQuest, fieldResearch, highlandAltarFound, highlandTrainerDefeated, homeDiscoveries, inventory, observatoryNodes, ownedPetIds, partnerId, partyHealth, pastureShrines, petProgress, phase, playerName, prologueComplete, routeEncounterId, seenPetIds, storedPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -1795,7 +2000,7 @@ export default function Home() {
   const prepareExplorationMap = useCallback((next: Phase) => {
     if (!(next in EXPLORATION_MAPS)) return;
     setLoadedMapId(null);
-    if (next === "road" || next === "highland") return;
+    if (["road", "highland", "windPass", "pasture", "observatory"].includes(next)) return;
     const map = EXPLORATION_MAPS[next as ExplorationPhase];
     setRoadPos(map.start);
     roadPositionLiveRef.current = map.start;
@@ -1825,6 +2030,9 @@ export default function Home() {
     if (next === "aftermath") registerPetSightings(["moss"]);
     if (next === "boss") registerPetSightings(["guardian"]);
     if (next === "highland") registerPetSightings(["frost", "lantern", "breeze"]);
+    if (next === "windPass") registerPetSightings(["breeze", "spark", "frost"]);
+    if (next === "pasture") registerPetSightings(["breeze", "bird", "frost", "lantern"]);
+    if (next === "observatory") registerPetSightings(["frost", "spark", "lantern", "guardian"]);
     if (next === "exam" && activePetHpRef.current) setExamHp(activePetHpRef.current);
     if (next === "boss" && activePetHpRef.current) setBossPlayerHp(activePetHpRef.current);
     if (next === "city") setCityDialogueOpen(false);
@@ -1833,17 +2041,56 @@ export default function Home() {
     setPhase(next);
   }, [playTone, prepareExplorationMap, registerPetSightings]);
 
-  const enterHighland = useCallback(() => {
-    const start = EXPLORATION_MAPS.highland.start;
-    setPrologueComplete(true);
-    setRoadPos(start);
-    roadPositionLiveRef.current = start;
+  const enterExploration = useCallback((next: BattleReturnPhase) => {
+    const map = EXPLORATION_MAPS[next];
+    setRoadPos(map.start);
+    roadPositionLiveRef.current = map.start;
     setRoadFacing("up");
+    setRoadBumped(false);
     setRoadInGrass(false);
     roadInGrassRef.current = false;
-    setToast(EXPLORATION_MAPS.highland.missionText);
-    go("highland");
+    grassStepsRef.current = 0;
+    grassTravelDistanceRef.current = 0;
+    setToast(map.missionText);
+    go(next);
   }, [go]);
+
+  const enterHighland = useCallback(() => {
+    setPrologueComplete(true);
+    enterExploration("highland");
+  }, [enterExploration]);
+
+  const startTrainerBattle = useCallback((battleId: TrainerBattleId) => {
+    const definition = TRAINER_BATTLES[battleId];
+    const battleParty = ownedPetIds.slice(0, 3);
+    if (battleParty.length === 0) return;
+    const health = Object.fromEntries(battleParty.map((id) => {
+      const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+      const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+      return [id, Math.max(0, Math.min(maximum, partyHealth[id] ?? maximum))];
+    })) as Partial<Record<PetSpeciesId, number>>;
+    const lead = battleParty.find((id) => (health[id] ?? 0) > 0);
+    if (!lead) {
+      setToast("同行宠物都无法战斗。先回断风营地休整吧。");
+      setHighlandCampOpen(true);
+      playTone(130);
+      return;
+    }
+    const firstEnemy = definition.team[0];
+    setTrainerBattleId(battleId);
+    setTrainerBattleResult("active");
+    setTrainerEnemyIndex(0);
+    setTrainerEnemyHp(scaledPetStats(PET_SPECIES[firstEnemy.id], firstEnemy.level).hp);
+    setTrainerPartyHp(health);
+    setActivePetId(lead);
+    setTrainerPlayerStatus(null);
+    setTrainerEnemyStatus(null);
+    setTrainerPartyOpen(false);
+    setTrainerLog(`${definition.trainerName}派出了${PET_SPECIES[firstEnemy.id].name}。三宠接力战开始！`);
+    setBattleBusy(false);
+    registerPetSightings(definition.team.map((entry) => entry.id));
+    go("trainerBattle");
+  }, [go, ownedPetIds, partyHealth, petProgress, playTone, registerPetSightings]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -1853,6 +2100,7 @@ export default function Home() {
     setCaptured(false);
     setCollectionView(null);
     setFieldCampOpen(false);
+    setHighlandCampOpen(false);
     setOwnedPetIds([]);
     setStoredPetIds([]);
     setSeenPetIds([]);
@@ -1882,6 +2130,12 @@ export default function Home() {
     setFieldResearch({ ...INITIAL_FIELD_RESEARCH });
     setPrologueComplete(false);
     setHighlandAltarFound(false);
+    setPartyHealth({});
+    setChapterQuest("camp");
+    setHighlandTrainerDefeated(false);
+    setPastureShrines([]);
+    setObservatoryNodes([]);
+    setChapterOneComplete(false);
     setBattleReturnPhase("road");
     grassStepsRef.current = 0;
     grassTravelDistanceRef.current = 0;
@@ -1891,6 +2145,15 @@ export default function Home() {
     setWildBattleResult("active");
     setWildPartyHp({});
     setBattlePartyOpen(false);
+    setTrainerBattleId("ranger");
+    setTrainerBattleResult("active");
+    setTrainerEnemyIndex(0);
+    setTrainerEnemyHp(1);
+    setTrainerPartyHp({});
+    setTrainerPlayerStatus(null);
+    setTrainerEnemyStatus(null);
+    setTrainerPartyOpen(false);
+    setTrainerLog("巡风员正在检查你的队伍。");
     setCaptureLog("高草突然晃动，一只茸角鼠警惕地跳了出来！");
     setCityDialogueOpen(false);
     setFestivalDialogueOpen(false);
@@ -1926,7 +2189,9 @@ export default function Home() {
         (saved.storedPetIds ?? []).filter(isPetSpeciesId),
         allRestoredOwned.slice(6),
       ).filter((id) => !restoredOwned.includes(id));
-      const restoredPhase = saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase;
+      const restoredPhase = saved.phase === "title" || saved.phase === "name"
+        ? "shelter"
+        : saved.phase === "trainerBattle" ? (saved.chapterQuest === "observatory" ? "observatory" : "windPass") : saved.phase;
       const restoredSeen = mergePetIds(
         storySightingsForPhase(restoredPhase),
         (saved.seenPetIds ?? []).filter(isPetSpeciesId),
@@ -1938,6 +2203,12 @@ export default function Home() {
       const restoredActivePetId = isPetSpeciesId(saved.activePetId) && restoredOwned.includes(saved.activePetId)
         ? saved.activePetId
         : restoredPartnerId ?? restoredOwned[0] ?? null;
+      const restoredPartyHealth = Object.fromEntries(mergePetIds(restoredOwned, restoredStored).map((id) => {
+        const progress = restoredProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+        const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+        const savedHp = saved.partyHealth?.[id];
+        return [id, typeof savedHp === "number" ? Math.max(0, Math.min(maximum, Math.round(savedHp))) : maximum];
+      })) as Partial<Record<PetSpeciesId, number>>;
       setPlayerName(saved.playerName || "小澈");
       setDraftName(saved.playerName || "小澈");
       setPartnerId(restoredPartnerId);
@@ -1949,12 +2220,19 @@ export default function Home() {
       setSeenPetIds(restoredSeen);
       setActivePetId(restoredActivePetId);
       setPetProgress(restoredProgress);
+      setPartyHealth(restoredPartyHealth);
       setInventory(normalizeInventory(saved.inventory));
       setFieldResearch(normalizeFieldResearch(saved.fieldResearch));
-      setPrologueComplete(Boolean(saved.prologueComplete) || ["ending", "highland"].includes(restoredPhase));
+      setPrologueComplete(Boolean(saved.prologueComplete) || ["ending", "highland", "windPass", "pasture", "observatory"].includes(restoredPhase));
       setHighlandAltarFound(Boolean(saved.highlandAltarFound));
-      setBattleReturnPhase(saved.battleReturnPhase === "highland" ? "highland" : "road");
+      setChapterQuest(saved.chapterQuest ?? (saved.highlandAltarFound ? "pass" : "camp"));
+      setHighlandTrainerDefeated(Boolean(saved.highlandTrainerDefeated));
+      setPastureShrines((saved.pastureShrines ?? []).filter((value) => Number.isInteger(value) && value >= 0 && value < PASTURE_SHRINE_POSITIONS.length));
+      setObservatoryNodes((saved.observatoryNodes ?? []).filter((value) => Number.isInteger(value) && value >= 0 && value < OBSERVATORY_NODE_POSITIONS.length));
+      setChapterOneComplete(Boolean(saved.chapterOneComplete));
+      setBattleReturnPhase(["road", "highland", "windPass", "pasture", "observatory"].includes(saved.battleReturnPhase ?? "") ? saved.battleReturnPhase as BattleReturnPhase : "road");
       setFieldCampOpen(false);
+      setHighlandCampOpen(false);
       const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
       setHomePos(HOME_START);
       homePositionLiveRef.current = HOME_START;
@@ -1983,6 +2261,7 @@ export default function Home() {
     setStoredPetIds([]);
     setActivePetId(id);
     setPetProgress([createPetProgress(id)]);
+    setPartyHealth({ [id]: PARTNERS[id].hp });
     registerPetSightings(STARTER_SIGHTINGS);
     setExamHp(PARTNERS[id].hp);
     setBossPlayerHp(PARTNERS[id].hp);
@@ -2071,6 +2350,18 @@ export default function Home() {
     playTone(860);
   }, [fieldResearch, inventory, playTone]);
 
+  const healPartyAtCamp = useCallback(() => {
+    const healed = Object.fromEntries(ownedPetIds.map((id) => {
+      const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+      return [id, scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp];
+    })) as Partial<Record<PetSpeciesId, number>>;
+    setPartyHealth((current) => ({ ...current, ...healed }));
+    setTrainerPlayerStatus(null);
+    setTrainerEnemyStatus(null);
+    setToast("巡逻员完成了全队治疗。所有同行宠物恢复到最佳状态。");
+    playTone(820);
+  }, [ownedPetIds, petProgress, playTone]);
+
   const handleHomePosition = useCallback((position: Position) => {
     homePositionLiveRef.current = position;
     const nearby = (Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>)
@@ -2144,11 +2435,14 @@ export default function Home() {
     setBattleReturnPhase(returnPhase);
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
-    setWildPlayerHp(activePetHpRef.current ?? 60);
-    setWildPartyHp(Object.fromEntries(ownedPetIds.map((petId) => {
+    const battleHealth = Object.fromEntries(ownedPetIds.map((petId) => {
       const progress = petProgress.find((entry) => entry.id === petId) ?? createPetProgress(petId);
-      return [petId, scaledPetStats(PET_SPECIES[petId], progress.level, progress.evolved).hp];
-    })));
+      const maximum = scaledPetStats(PET_SPECIES[petId], progress.level, progress.evolved).hp;
+      return [petId, Math.max(0, Math.min(maximum, partyHealth[petId] ?? maximum))];
+    })) as Partial<Record<PetSpeciesId, number>>;
+    const leadHealth = activePetId ? battleHealth[activePetId] ?? activePetHpRef.current ?? 60 : activePetHpRef.current ?? 60;
+    setWildPlayerHp(leadHealth);
+    setWildPartyHp(battleHealth);
     setBattlePartyOpen(false);
     setWildCalm(0);
     setWildBattleResult("active");
@@ -2156,7 +2450,7 @@ export default function Home() {
     setToast(`野生的${encounter.name}出现了！`);
     setEncounterPending(true);
     playTone(210);
-  }, [ownedPetIds, petProgress, playTone, registerPetSightings]);
+  }, [activePetId, ownedPetIds, partyHealth, petProgress, playTone, registerPetSightings]);
 
   const handleRoadPosition = useCallback((position: Position, distancePixels: number) => {
     roadPositionLiveRef.current = position;
@@ -2165,7 +2459,7 @@ export default function Home() {
     if (inGrass !== roadInGrassRef.current) {
       roadInGrassRef.current = inGrass;
       setRoadInGrass(inGrass);
-      if (inGrass) setToast(phase === "highland" ? "金色灌丛里传来陌生铃声。这里栖息着高原宠物。" : captured ? "高草沙沙作响。继续调查可能遇到不同的宠物。" : "高草在脚边晃动……");
+      if (inGrass) setToast(phase !== "road" ? "草丛里传来陌生铃声。这里栖息着高原宠物。" : captured ? "高草沙沙作响。继续调查可能遇到不同的宠物。" : "高草在脚边晃动……");
       else if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
       else setToast(activeMap.missionText);
     }
@@ -2184,7 +2478,7 @@ export default function Home() {
     if (steps >= 9 || Math.random() < chance) {
       grassStepsRef.current = 0;
       setRoadPos(position);
-      const returnPhase: BattleReturnPhase = phase === "highland" ? "highland" : "road";
+      const returnPhase: BattleReturnPhase = ["highland", "windPass", "pasture", "observatory"].includes(phase) ? phase as BattleReturnPhase : "road";
       beginRouteEncounter(randomRouteEncounter(returnPhase), returnPhase);
     }
   }, [activeMap, beginRouteEncounter, captured, phase]);
@@ -2199,7 +2493,7 @@ export default function Home() {
   }, [activeMap, playTone]);
 
   const exploreInteraction = useCallback((position: Position) => {
-    if (!activeMap || !mapAssetReady || collectionView !== null || fieldCampOpen || helpOpen) return;
+    if (!activeMap || !mapAssetReady || collectionView !== null || fieldCampOpen || highlandCampOpen || helpOpen) return;
     roadPositionLiveRef.current = position;
     setRoadPos(position);
     if (phase === "road" && distance(position, ROAD_START) < 9) {
@@ -2260,21 +2554,90 @@ export default function Home() {
       return;
     }
     if (phase === "highland" && distance(position, activeMap.start) < 9) {
-      setToast("搭乘高原索道返回彩虹学院。随时可以从学院北门再次出发。");
-      go("city");
+      setHighlandCampOpen(true);
+      setToast("断风调查营地可以治疗全队、补充物资或搭乘索道返回学院。");
+      playTone(610);
       return;
     }
     if (phase === "highland" && distance(position, activeMap.interaction) < 9) {
       if (!highlandAltarFound) {
         setHighlandAltarFound(true);
+        setChapterQuest("pass");
         setInventory((current) => ({ ...current, coins: current.coins + 160, crystals: current.crystals + 3 }));
         setToast("在黑铃基座下发现了安琪儿留下的坐标。获得 160 金币与 3 枚灵契晶片。");
         playTone(880);
       } else {
-        setToast("黑铃内侧刻着同一行坐标：北方冻土 · 旧契约观测站。新的旅途尚未开放。");
-        playTone(620);
+        setToast("黑铃坐标指向前方的风蚀栈道。正在进入新的高原区域。");
+        enterExploration("windPass");
       }
       return;
+    }
+    if (phase === "windPass" && distance(position, activeMap.start) < 9) {
+      enterExploration("highland");
+      return;
+    }
+    if (phase === "windPass" && distance(position, WIND_PASS_RANGER_POSITION) < 8) {
+      if (!highlandTrainerDefeated) startTrainerBattle("ranger");
+      else setToast("岚绪：山门已经为你开放。去云铃牧场调查三座石铃吧。");
+      return;
+    }
+    if (phase === "windPass" && distance(position, activeMap.interaction) < 9) {
+      if (!highlandTrainerDefeated) {
+        setToast("山门需要巡风员的通行许可。先在中央栈道通过三宠试炼。");
+        playTone(150);
+      } else enterExploration("pasture");
+      return;
+    }
+    if (phase === "pasture" && distance(position, activeMap.start) < 9) {
+      enterExploration("windPass");
+      return;
+    }
+    if (phase === "pasture") {
+      const shrine = PASTURE_SHRINE_POSITIONS.findIndex((shrinePosition, index) => !pastureShrines.includes(index) && distance(position, shrinePosition) < 8);
+      if (shrine >= 0) {
+        const next = [...pastureShrines, shrine];
+        setPastureShrines(next);
+        if (next.length === PASTURE_SHRINE_POSITIONS.length) {
+          setChapterQuest("observatory");
+          setInventory((current) => ({ ...current, berries: current.berries + 2, crystals: current.crystals + 1 }));
+          setToast("三座云铃同时回应，观测站阶梯重新亮起。获得 2 份莓果与 1 枚灵契晶片。");
+          playTone(880);
+        } else {
+          setToast(`第 ${next.length} 座云铃已经唤醒。风正把铃声送往观测站。`);
+          playTone(480 + shrine * 100);
+        }
+        return;
+      }
+      if (distance(position, activeMap.interaction) < 9) {
+        if (pastureShrines.length < PASTURE_SHRINE_POSITIONS.length) {
+          setToast(`观测站没有回应。还需唤醒 ${PASTURE_SHRINE_POSITIONS.length - pastureShrines.length} 座云铃。`);
+          playTone(150);
+        } else enterExploration("observatory");
+        return;
+      }
+    }
+    if (phase === "observatory" && distance(position, activeMap.start) < 9) {
+      enterExploration("pasture");
+      return;
+    }
+    if (phase === "observatory") {
+      const node = OBSERVATORY_NODE_POSITIONS.findIndex((nodePosition, index) => !observatoryNodes.includes(index) && distance(position, nodePosition) < 8);
+      if (node >= 0) {
+        const next = [...observatoryNodes, node];
+        setObservatoryNodes(next);
+        setToast(next.length === OBSERVATORY_NODE_POSITIONS.length ? "三枚紫晶节点完成连接。圆形观测台的封锁已经解除。" : `观测回路 ${next.length}/3 已连接。`);
+        playTone(420 + node * 130);
+        return;
+      }
+      if (distance(position, activeMap.interaction) < 9) {
+        if (chapterOneComplete) {
+          setToast("朔已经离开。圆台上保留着安琪儿的下一组观测坐标。");
+        } else if (observatoryNodes.length < OBSERVATORY_NODE_POSITIONS.length) {
+          setToast(`圆台仍被封锁。还需连接 ${OBSERVATORY_NODE_POSITIONS.length - observatoryNodes.length} 枚紫晶节点。`);
+          playTone(150);
+        } else startTrainerBattle("warden");
+        return;
+      }
     }
 
     if (phase === "road") setToast(captured ? "沿可见道路前往东北城门，靠近后按 E。" : "进入金色高草移动，野生宠物会随机出现。");
@@ -2283,7 +2646,10 @@ export default function Home() {
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
     if (phase === "highland") setToast("沿金色道路穿过悬桥；进入灌丛会遇到高原宠物。");
-  }, [activeMap, captured, collectionView, enterHighland, fieldCampOpen, fieldResearch, go, helpOpen, highlandAltarFound, mapAssetReady, phase, playTone, prologueComplete, ruptureNodes]);
+    if (phase === "windPass") setToast("沿石路寻找中央栈道的巡风员岚绪。通过三宠试炼才能打开山门。");
+    if (phase === "pasture") setToast("靠近尚未回应的云铃后按 E。银蓝草甸里会出现稀有宠物。");
+    if (phase === "observatory") setToast("连接左右回廊与中央阶梯旁的三枚紫晶节点。");
+  }, [activeMap, captured, chapterOneComplete, collectionView, enterExploration, enterHighland, fieldCampOpen, fieldResearch, go, helpOpen, highlandAltarFound, highlandCampOpen, highlandTrainerDefeated, mapAssetReady, observatoryNodes, pastureShrines, phase, playTone, prologueComplete, ruptureNodes, startTrainerBattle]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -2298,7 +2664,7 @@ export default function Home() {
 
   const finishWildBattle = (wasCaptured: boolean) => {
     const rewards = battleRewards(routeEncounter.level, wasCaptured);
-    const crystalReward = battleReturnPhase === "highland" && routeEncounter.level >= 8 ? 1 : 0;
+    const crystalReward = battleReturnPhase !== "road" && routeEncounter.level >= 8 ? 1 : 0;
     const alreadyOwned = ownedPetIds.includes(routeEncounter.id) || storedPetIds.includes(routeEncounter.id);
     const sentToStorage = wasCaptured && !alreadyOwned && ownedPetIds.length >= 6;
     setWildBattleResult(wasCaptured ? "captured" : "victory");
@@ -2320,6 +2686,7 @@ export default function Home() {
       if (!alreadyOwned) {
         if (sentToStorage) setStoredPetIds((current) => mergePetIds(current, [routeEncounter.id]));
         else setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]).slice(0, 6));
+        setPartyHealth((current) => ({ ...current, [routeEncounter.id]: PET_SPECIES[routeEncounter.id].stats.hp }));
       }
       registerPetSightings([routeEncounter.id]);
     }
@@ -2345,6 +2712,7 @@ export default function Home() {
     await animateBattleFx({ skill: `${routeEncounter.name}的反击`, kind: "claw", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => {
       setWildPlayerHp(nextHp);
       setWildPartyHp((current) => ({ ...current, [targetId]: nextHp }));
+      setPartyHealth((current) => ({ ...current, [targetId]: nextHp }));
     });
     if (nextHp <= 0) {
       const reserve = ownedPetIds.find((id) => id !== targetId && (wildPartyHp[id] ?? 0) > 0);
@@ -2401,6 +2769,7 @@ export default function Home() {
             if (healing > 0) {
               setWildPlayerHp(healedHp);
               if (activePetId) setWildPartyHp((current) => ({ ...current, [activePetId]: healedHp }));
+              if (activePetId) setPartyHealth((current) => ({ ...current, [activePetId]: healedHp }));
             }
           });
           await wildCounterAttack(guarding, healedHp);
@@ -2477,6 +2846,189 @@ export default function Home() {
       }
       setCaptureLog(`${routeEncounter.name}挣脱了胶囊！当前成功率约 ${Math.round(chance * 100)}%。`);
       await wildCounterAttack(false);
+    } finally {
+      setBattleBusy(false);
+    }
+  };
+
+  const finishTrainerVictory = (battleId: TrainerBattleId) => {
+    const definition = TRAINER_BATTLES[battleId];
+    const battleParty = ownedPetIds.slice(0, 3);
+    setTrainerBattleResult("victory");
+    setTrainerPartyOpen(false);
+    setTrainerPlayerStatus(null);
+    setTrainerEnemyStatus(null);
+    setInventory((current) => ({
+      ...current,
+      coins: current.coins + definition.rewardCoins,
+      crystals: current.crystals + (battleId === "warden" ? 4 : 0),
+    }));
+    setPetProgress((current) => current.map((entry) => battleParty.includes(entry.id) ? addPetExperience(entry, definition.rewardExperience) : entry));
+    if (battleId === "ranger") {
+      setHighlandTrainerDefeated(true);
+      setChapterQuest("pasture");
+      setTrainerLog(`岚绪收起风铃：三场接力都很稳。获得 ${definition.rewardExperience} 经验与 ${definition.rewardCoins} 金币，山门通行许可已经开放。`);
+    } else {
+      setChapterOneComplete(true);
+      setChapterQuest("complete");
+      registerPetSightings(["guardian"]);
+      setTrainerLog(`朔交出了安琪儿的观测记录。获得 ${definition.rewardExperience} 经验、${definition.rewardCoins} 金币与 4 枚灵契晶片。第一章完成！`);
+    }
+    playTone(920);
+  };
+
+  const advanceTrainerEnemy = async (nextIndex: number) => {
+    if (nextIndex >= trainerDefinition.team.length) {
+      finishTrainerVictory(trainerBattleId);
+      return true;
+    }
+    const nextPet = trainerDefinition.team[nextIndex];
+    const nextStats = scaledPetStats(PET_SPECIES[nextPet.id], nextPet.level);
+    setTrainerEnemyIndex(nextIndex);
+    setTrainerEnemyHp(nextStats.hp);
+    setTrainerEnemyStatus(null);
+    setTrainerLog(`${trainerDefinition.trainerName}收回倒下的伙伴，派出了${PET_SPECIES[nextPet.id].name}！`);
+    await animateBattleFx({ skill: `第 ${nextIndex + 1} 只 · ${PET_SPECIES[nextPet.id].name}`, kind: "call", attacker: "enemy", target: "enemy", value: `Lv.${nextPet.level}`, positive: true });
+    return true;
+  };
+
+  const trainerEnemyTurn = async (options: {
+    enemyHp: number;
+    playerHp: number;
+    guarding?: boolean;
+    enemyStatus?: BattleStatus | null;
+    playerId?: PetSpeciesId | null;
+  }) => {
+    const playerId = options.playerId ?? activePetId;
+    if (!playerId) return;
+    const playerProgress = petProgress.find((entry) => entry.id === playerId) ?? createPetProgress(playerId);
+    const playerStats = scaledPetStats(PET_SPECIES[playerId], playerProgress.level, playerProgress.evolved);
+    let currentEnemyHp = options.enemyHp;
+    const currentEnemyStatus = options.enemyStatus === undefined ? trainerEnemyStatus : options.enemyStatus;
+    const tick = applyStatusTick({ hp: currentEnemyHp, maxHp: trainerEnemyStats.hp, status: currentEnemyStatus });
+    if (tick.damage > 0) {
+      await animateBattleFx({ skill: `${BATTLE_STATUS_LABELS[currentEnemyStatus!]}持续伤害`, kind: "memory", attacker: "ally", target: "enemy", value: `-${tick.damage}` }, () => {
+        currentEnemyHp = tick.hp;
+        setTrainerEnemyHp(tick.hp);
+      });
+    }
+    if (currentEnemyHp <= 0) {
+      await advanceTrainerEnemy(trainerEnemyIndex + 1);
+      return;
+    }
+    if (tick.skipTurn) {
+      setTrainerEnemyStatus(null);
+      setTrainerLog(`${trainerEnemySpecies.name}被冰封，错过了行动机会！`);
+      return;
+    }
+    const support = trainerEnemySpecies.skills.find((skill) => skill.level <= trainerEnemyPet.level && skill.power === null);
+    const attack = trainerEnemySpecies.skills.find((skill) => skill.level <= trainerEnemyPet.level && skill.power !== null) ?? trainerEnemySpecies.skills[0];
+    if (enemyAction({ hp: currentEnemyHp, maxHp: trainerEnemyStats.hp, hasSupportSkill: Boolean(support) }) === "support" && support) {
+      const recovery = Math.max(8, Math.round(trainerEnemyStats.spirit * 0.18));
+      const healed = Math.min(trainerEnemyStats.hp, currentEnemyHp + recovery);
+      setTrainerLog(`${trainerDefinition.trainerName}判断体力不足，${trainerEnemySpecies.name}使出${support.name}！`);
+      await animateBattleFx({ skill: support.name, kind: "heal", attacker: "enemy", target: "enemy", value: `HP +${healed - currentEnemyHp}`, positive: true }, () => setTrainerEnemyHp(healed));
+      return;
+    }
+    const multiplier = elementMultiplier(attack.element, PET_SPECIES[playerId].element);
+    const rawDamage = calculateSkillDamage({ power: attack.power ?? 36, level: trainerEnemyPet.level, attack: trainerEnemyStats.attack, defense: playerStats.defense, multiplier });
+    const damage = Math.max(4, Math.round(rawDamage * (options.guarding ? 0.48 : currentEnemyStatus === "slow" ? 0.78 : 1)));
+    const nextHp = Math.max(0, options.playerHp - damage);
+    setTrainerLog(`${trainerEnemySpecies.name}发动${attack.name}！`);
+    await animateBattleFx({ skill: attack.name, kind: petBattleFxKind(attack.element), attacker: "enemy", target: "ally", value: `-${damage}` }, () => {
+      setTrainerPartyHp((current) => ({ ...current, [playerId]: nextHp }));
+      setPartyHealth((current) => ({ ...current, [playerId]: nextHp }));
+    });
+    const inflicted = shouldInflictStatus({ element: attack.element, power: attack.power });
+    const nextStatus = inflicted ? statusForElement(attack.element) : null;
+    if (nextStatus) setTrainerPlayerStatus(nextStatus);
+    if (nextHp <= 0) {
+      const reserve = ownedPetIds.slice(0, 3).find((id) => id !== playerId && (trainerPartyHp[id] ?? partyHealth[id] ?? 0) > 0);
+      if (reserve) {
+        setTrainerPartyOpen(true);
+        setTrainerLog(`${petDisplayName(playerId, playerProgress)}失去战斗能力！请选择接替伙伴。`);
+      } else {
+        setTrainerBattleResult("defeat");
+        setTrainerLog("三只同行宠物都失去了战斗能力。巡逻员将队伍送回断风营地。");
+      }
+      return;
+    }
+    setTrainerLog(`${attack.name}造成 ${damage} 点伤害${nextStatus ? `，并附加${BATTLE_STATUS_LABELS[nextStatus]}` : ""}。`);
+  };
+
+  const switchTrainerPet = async (id: PetSpeciesId) => {
+    if (battleBusy || trainerBattleResult !== "active" || id === activePetId || !ownedPetIds.slice(0, 3).includes(id)) return;
+    const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+    const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+    const hp = trainerPartyHp[id] ?? partyHealth[id] ?? maximum;
+    if (hp <= 0) return;
+    const forced = activePetId ? (trainerPartyHp[activePetId] ?? 0) <= 0 : true;
+    setBattleBusy(true);
+    setActivePetId(id);
+    setTrainerPlayerStatus(null);
+    setTrainerPartyOpen(false);
+    setTrainerLog(`${petDisplayName(id, progress)}接替上场！`);
+    try {
+      await animateBattleFx({ skill: forced ? "接力换宠" : "战术换宠", kind: "call", attacker: "trainer", target: "ally", value: petDisplayName(id, progress), positive: true });
+      if (!forced) await trainerEnemyTurn({ enemyHp: trainerEnemyHp, playerHp: hp, playerId: id });
+    } finally {
+      setBattleBusy(false);
+    }
+  };
+
+  const trainerAction = async (slot: number) => {
+    if (battleBusy || trainerBattleResult !== "active" || !activePetId || !activeSpecies || !activeProgress || !activeStats) return;
+    const skill = equippedSkillDefinitions[slot];
+    if (!skill) return;
+    setBattleBusy(true);
+    try {
+      const currentHp = trainerPartyHp[activePetId] ?? partyHealth[activePetId] ?? activeStats.hp;
+      const playerTick = applyStatusTick({ hp: currentHp, maxHp: activeStats.hp, status: trainerPlayerStatus });
+      if (playerTick.damage > 0) {
+        await animateBattleFx({ skill: `${BATTLE_STATUS_LABELS[trainerPlayerStatus!]}持续伤害`, kind: "memory", attacker: "enemy", target: "ally", value: `-${playerTick.damage}` }, () => {
+          setTrainerPartyHp((current) => ({ ...current, [activePetId]: playerTick.hp }));
+          setPartyHealth((current) => ({ ...current, [activePetId]: playerTick.hp }));
+        });
+      }
+      if (playerTick.hp <= 0) {
+        setTrainerPartyOpen(true);
+        setTrainerLog(`${petDisplayName(activePetId, activeProgress)}被异常状态耗尽体力，请选择接替伙伴。`);
+        return;
+      }
+      if (playerTick.skipTurn) {
+        setTrainerPlayerStatus(null);
+        setTrainerLog(`${petDisplayName(activePetId, activeProgress)}挣脱了冰封，但本回合无法行动。`);
+        await trainerEnemyTurn({ enemyHp: trainerEnemyHp, playerHp: playerTick.hp });
+        return;
+      }
+      if (skill.power === null) {
+        const guarding = skill.description.includes("防御") || skill.description.includes("伤害") || ["metal", "earth", "ice", "wind"].includes(skill.element);
+        const recovery = guarding ? 0 : Math.max(9, Math.round(activeStats.spirit * 0.18));
+        const healed = Math.min(activeStats.hp, playerTick.hp + recovery);
+        setTrainerLog(`${petDisplayName(activePetId, activeProgress)}使出${skill.name}！`);
+        await animateBattleFx({ skill: skill.name, kind: guarding ? "guard" : "heal", attacker: "ally", target: "ally", value: guarding ? "伤害减半" : `HP +${healed - playerTick.hp}`, positive: true }, () => {
+          setTrainerPartyHp((current) => ({ ...current, [activePetId]: healed }));
+          setPartyHealth((current) => ({ ...current, [activePetId]: healed }));
+          if (skill.description.includes("清除")) setTrainerPlayerStatus(null);
+        });
+        await trainerEnemyTurn({ enemyHp: trainerEnemyHp, playerHp: healed, guarding });
+        return;
+      }
+      const multiplier = elementMultiplier(skill.element, trainerEnemySpecies.element);
+      const damage = calculateSkillDamage({ power: skill.power, level: activeProgress.level, attack: activeStats.attack, defense: trainerEnemyStats.defense, multiplier });
+      const nextEnemyHp = Math.max(0, trainerEnemyHp - damage);
+      const nextStatus = shouldInflictStatus({ element: skill.element, power: skill.power }) ? statusForElement(skill.element) : null;
+      setTrainerLog(`${petDisplayName(activePetId, activeProgress)}使出${skill.name}！`);
+      await animateBattleFx({ skill: skill.name, kind: petBattleFxKind(skill.element), attacker: "ally", target: "enemy", value: `-${damage}` }, () => {
+        setTrainerEnemyHp(nextEnemyHp);
+        if (nextStatus) setTrainerEnemyStatus(nextStatus);
+      });
+      if (nextEnemyHp <= 0) {
+        await advanceTrainerEnemy(trainerEnemyIndex + 1);
+        return;
+      }
+      setTrainerLog(`${skill.name}造成 ${damage} 点伤害${nextStatus ? `，附加${BATTLE_STATUS_LABELS[nextStatus]}` : ""}。`);
+      await trainerEnemyTurn({ enemyHp: nextEnemyHp, playerHp: playerTick.hp, enemyStatus: nextStatus ?? trainerEnemyStatus });
     } finally {
       setBattleBusy(false);
     }
@@ -2586,7 +3138,7 @@ export default function Home() {
     if (["title", "name", "home", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
     if (["city", "exam", "festival"].includes(phase)) return "序章 · 黄金庆典";
     if (["rupture", "boss", "aftermath"].includes(phase)) return "序章 · 灵契断裂";
-    if (phase === "highland") return "第一章 · 黑铃回声";
+    if (["highland", "windPass", "pasture", "observatory", "trainerBattle"].includes(phase)) return "第一章 · 黑铃回声";
     return "序章 · 没有登记的伙伴";
   }, [phase]);
 
@@ -2739,13 +3291,25 @@ export default function Home() {
           ] : phase === "aftermath" ? [
             { label: "绕开破碎万灵晶核", done: roadPos.y < 58 },
             { label: "抵达上方记忆祭台" },
-          ] : [
-            { label: "离开高原调查营地", done: roadPos.y < 76 },
+          ] : phase === "highland" ? [
+            { label: "在断风营地整备", done: chapterQuest !== "camp" },
             { label: "穿过两座悬空石桥", done: roadPos.y < 46 },
             { label: highlandAltarFound ? "黑铃坐标已记录" : "调查黑铃祭台", done: highlandAltarFound },
+          ] : phase === "windPass" ? [
+            { label: "抵达中央巡风哨", done: highlandTrainerDefeated },
+            { label: "完成三宠接力试炼", done: highlandTrainerDefeated },
+            { label: "从东北山门进入牧场", done: false },
+          ] : phase === "pasture" ? [
+            ...PASTURE_SHRINE_POSITIONS.map((_, index) => ({ label: `唤醒云铃 ${index + 1}`, done: pastureShrines.includes(index) })),
+            { label: "前往山顶观测站", done: false },
+          ] : phase === "observatory" ? [
+            ...OBSERVATORY_NODE_POSITIONS.map((_, index) => ({ label: `连接紫晶节点 ${index + 1}`, done: observatoryNodes.includes(index) })),
+            { label: chapterOneComplete ? "取得安琪儿的观测记录" : "挑战无籍观测员朔", done: chapterOneComplete },
+          ] : [
+            { label: "继续探索", done: false },
           ]}
           mapReady={mapAssetReady}
-          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || fieldCampOpen || helpOpen}
+          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || fieldCampOpen || highlandCampOpen || helpOpen}
           onMapReady={setLoadedMapId}
           markers={<>
             {phase === "road" && <>
@@ -2771,8 +3335,23 @@ export default function Home() {
               <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>记忆祭台</span><i>按 E</i></button>
             </>}
             {phase === "highland" && <>
-              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>断风调查营地</span><i>返回彩虹城</i></button>
-              <button type="button" className={`map-landmark rift-landmark${highlandAltarFound ? "" : " landmark-ready"}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{highlandAltarFound ? "黑铃祭台 · 已调查" : "黑铃祭台"}</span><i>按 E</i></button>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>断风调查营地</span><i>治疗 / 补给</i></button>
+              <button type="button" className="map-landmark rift-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{highlandAltarFound ? "黑铃坐标 · 风蚀栈道" : "黑铃祭台"}</span><i>按 E</i></button>
+            </>}
+            {phase === "windPass" && <>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回断风遗迹</span><i>按 E</i></button>
+              <button type="button" className={`map-landmark npc-landmark${highlandTrainerDefeated ? "" : " landmark-ready"}`} style={{ left: `${WIND_PASS_RANGER_POSITION.x}%`, top: `${WIND_PASS_RANGER_POSITION.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>巡风员 · 岚绪</span><i>{highlandTrainerDefeated ? "试炼完成" : "三宠试炼"}</i></button>
+              <button type="button" className={`map-landmark gate-landmark${highlandTrainerDefeated ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>云铃牧场山门</span><i>{highlandTrainerDefeated ? "可进入" : "需要许可"}</i></button>
+            </>}
+            {phase === "pasture" && <>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回风蚀栈道</span><i>按 E</i></button>
+              {PASTURE_SHRINE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${pastureShrines.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><i>{pastureShrines.includes(index) ? "✓" : "铃"}</i><span>{pastureShrines.includes(index) ? "已回应" : `云铃 ${index + 1}`}</span></button>)}
+              <button type="button" className={`map-landmark gate-landmark${pastureShrines.length === 3 ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>冻星观测站</span><i>{pastureShrines.length === 3 ? "回路已恢复" : `${pastureShrines.length}/3 云铃`}</i></button>
+            </>}
+            {phase === "observatory" && <>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>返回云铃牧场</span><i>按 E</i></button>
+              {OBSERVATORY_NODE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${observatoryNodes.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><i>{observatoryNodes.includes(index) ? "✓" : "◆"}</i><span>{observatoryNodes.includes(index) ? "已连接" : `紫晶 ${index + 1}`}</span></button>)}
+              <button type="button" className={`map-landmark rift-landmark${observatoryNodes.length === 3 ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{chapterOneComplete ? "观测记录 · 已取得" : "圆形观测台"}</span><i>{chapterOneComplete ? "第一章完成" : `${observatoryNodes.length}/3 回路`}</i></button>
             </>}
           </>}
           onPosition={handleRoadPosition}
@@ -2786,7 +3365,7 @@ export default function Home() {
         <section className={`battle-screen capture-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop field-battle-bg" style={{ backgroundImage: `linear-gradient(rgba(8, 23, 29, 0.1), rgba(8, 23, 29, 0.3)), url(${SCENE_ART[battleReturnPhase]})` }}><i /><i /><i /></div>
           <BattleEffects fx={battleFx} />
-          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>{battleReturnPhase === "highland" ? "东之高原野外战" : "青崖野外战"}</h2><p>观察属性与戒备，灵活换宠，选择击败、捕捉或撤离。</p></div>
+          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>{battleReturnPhase === "road" ? "青崖野外战" : "东之高原野外战"}</h2><p>观察属性与戒备，灵活换宠，选择击败、捕捉或撤离。</p></div>
           <div className="enemy-side">
             <div className="combatant-info"><span><b>{routeEncounter.name}</b><small>{routeEncounter.kind} · Lv.{routeEncounter.level}</small></span><em>{wildHp} / {routeEncounter.maxHp}</em><Meter value={wildHp} max={routeEncounter.maxHp} /></div>
             <div className={battleActorClass("enemy", battleFx)}><PetSprite id={routeEncounter.id} size="xl" /></div>
@@ -2816,17 +3395,73 @@ export default function Home() {
               const defeated = wildBattleResult === "defeat";
               const researchReady = isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed;
               if (defeated) {
+                const recovered = Object.fromEntries(ownedPetIds.map((id) => {
+                  const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+                  const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+                  return [id, Math.max(1, Math.round(maximum * 0.35))];
+                })) as Partial<Record<PetSpeciesId, number>>;
+                setPartyHealth((current) => ({ ...current, ...recovered }));
+                if (battleReturnPhase !== "road") {
+                  enterExploration("highland");
+                  setHighlandCampOpen(true);
+                  return;
+                }
                 const safeStart = EXPLORATION_MAPS[battleReturnPhase].start;
                 setRoadPos(safeStart);
                 roadPositionLiveRef.current = safeStart;
               }
-              setToast(defeated ? `巡逻员把你送回了${battleReturnPhase === "highland" ? "断风" : "青崖"}调查营地。` : battleReturnPhase === "highland" ? "高原的风再次响起。可继续调查灌丛或前往黑铃祭台。" : researchReady ? "生态调查已经完成，返回下方营地提交记录。" : captured ? "可以继续调查高草，也可以前往东北方的彩虹城门。" : "返回高草后仍可继续尝试捕捉。 ");
+              setToast(defeated ? "巡逻员把你送回了青崖调查营地。" : battleReturnPhase !== "road" ? "高原的风再次响起。可继续调查当前区域。" : researchReady ? "生态调查已经完成，返回下方营地提交记录。" : captured ? "可以继续调查高草，也可以前往东北方的彩虹城门。" : "返回高草后仍可继续尝试捕捉。 ");
               setRoadInGrass(false);
               roadInGrassRef.current = false;
               grassStepsRef.current = 0;
               grassTravelDistanceRef.current = 0;
               go(battleReturnPhase);
             }}><span>{wildBattleResult === "captured" ? "带新伙伴返回地图" : wildBattleResult === "victory" ? "领取战利品并返回" : wildBattleResult === "defeat" ? "返回调查营地" : "退出高草"}</span><b>›</b></button>}
+          </div>
+        </section>
+      )}
+
+      {phase === "trainerBattle" && partner && activePetId && activeStats && (
+        <section className={`battle-screen trainer-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
+          <div className="battle-backdrop field-battle-bg trainer-battle-bg" style={{ backgroundImage: `linear-gradient(rgba(8, 18, 29, 0.18), rgba(8, 18, 29, 0.5)), url(${SCENE_ART[trainerDefinition.background]})` }}><i /><i /><i /></div>
+          <BattleEffects fx={battleFx} />
+          <div className="battle-heading light"><small>TRAINER TEAM BATTLE · 3 VS 3</small><h2>{trainerDefinition.title}</h2><p>{trainerDefinition.description}</p></div>
+          <div className="trainer-team-ribbon enemy-team-ribbon">{trainerDefinition.team.map((entry, index) => <div key={`${entry.id}-${index}`} className={`${index === trainerEnemyIndex ? "active " : ""}${index < trainerEnemyIndex ? "fainted" : ""}`}><PetSprite id={entry.id} size="sm" /><span>{index < trainerEnemyIndex ? "失去战斗能力" : `Lv.${entry.level}`}</span></div>)}</div>
+          <div className="enemy-side">
+            <div className="combatant-info danger"><span><b>{trainerEnemySpecies.name}</b><small>{trainerEnemySpecies.elementLabel} · Lv.{trainerEnemyPet.level}{trainerEnemyStatus ? ` · ${BATTLE_STATUS_LABELS[trainerEnemyStatus]}` : ""}</small></span><em>{trainerEnemyHp} / {trainerEnemyStats.hp}</em><Meter value={trainerEnemyHp} max={trainerEnemyStats.hp} /></div>
+            <div className={battleActorClass("enemy", battleFx)}><PetSprite id={trainerEnemyPet.id} size="xl" glitched={trainerBattleId === "warden" && trainerEnemyPet.id === "guardian"} /></div>
+            <div className="trainer-nameplate"><small>{trainerDefinition.trainerRole}</small><b>{trainerDefinition.trainerName}</b><span>{trainerEnemyIndex + 1} / {trainerDefinition.team.length}</span></div>
+          </div>
+          <div className="ally-side">
+            <div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div>
+            <div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}{trainerPlayerStatus ? ` · ${BATTLE_STATUS_LABELS[trainerPlayerStatus]}` : ""}</small></span><em>{trainerPartyHp[activePetId] ?? 0} / {activeStats.hp}</em><Meter value={trainerPartyHp[activePetId] ?? 0} max={activeStats.hp} /></div>
+          </div>
+          {trainerPartyOpen && <div className="battle-party-panel trainer-party-panel">
+            <header><span><small>3-PET PARTY</small><b>{(trainerPartyHp[activePetId] ?? 0) <= 0 ? "选择接替伙伴" : "战术换宠"}</b></span><button type="button" disabled={(trainerPartyHp[activePetId] ?? 0) <= 0 || battleBusy} onClick={() => setTrainerPartyOpen(false)}>×</button></header>
+            <div>{ownedPetIds.slice(0, 3).map((id, index) => {
+              const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+              const stats = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved);
+              const hp = trainerPartyHp[id] ?? partyHealth[id] ?? stats.hp;
+              return <button type="button" key={id} className={`${id === activePetId ? "active " : ""}${hp <= 0 ? "fainted" : ""}`} disabled={battleBusy || id === activePetId || hp <= 0} onClick={() => switchTrainerPet(id)}><i>{index + 1}</i><PetSprite id={id} size="sm" /><span><b>{petDisplayName(id, progress)}</b><small>Lv.{progress.level} · {hp <= 0 ? "无法战斗" : `${hp}/${stats.hp}`}</small><Meter value={hp} max={stats.hp} /></span></button>;
+            })}</div>
+          </div>}
+          <div className="battle-command trainer-command">
+            <div className="battle-log"><span>{trainerDefinition.trainerName}的队伍 · 我方前 3 只参战</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : trainerBattleResult === "active" ? "等待指令" : trainerBattleResult === "victory" ? "试炼通过" : "队伍败北"}</i><p>{trainerLog}</p></div>
+            {trainerBattleResult === "active" ? <div className="command-grid trainer-command-grid">
+              {equippedSkillDefinitions.map((skill, slot) => <button type="button" key={skill.name} disabled={battleBusy || (trainerPartyHp[activePetId] ?? 0) <= 0} onClick={() => trainerAction(slot)}><span>技能 {String(slot + 1).padStart(2, "0")}</span><b>{skill.name}</b><small>{skill.power === null ? "支援 / 防御" : `${skill.element} · 威力 ${skill.power}`}</small></button>)}
+              <button type="button" className="party-command" disabled={battleBusy} onClick={() => setTrainerPartyOpen(true)}><span>队伍 · 3</span><b>战术换宠</b><small>{ownedPetIds.slice(0, 3).filter((id) => (trainerPartyHp[id] ?? partyHealth[id] ?? 0) > 0).length} 只可战斗</small></button>
+            </div> : <button type="button" className="primary-action battle-continue" onClick={() => {
+              if (trainerBattleResult === "defeat") {
+                const recovered = Object.fromEntries(ownedPetIds.map((id) => {
+                  const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+                  const maximum = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
+                  return [id, Math.max(1, Math.round(maximum * 0.35))];
+                })) as Partial<Record<PetSpeciesId, number>>;
+                setPartyHealth((current) => ({ ...current, ...recovered }));
+                enterExploration("highland");
+                setHighlandCampOpen(true);
+              } else go(trainerDefinition.background);
+            }}><span>{trainerBattleResult === "victory" ? (trainerBattleId === "warden" ? "带着观测记录返回圆台" : "穿过山门继续调查") : "返回断风营地休整"}</span><b>›</b></button>}
           </div>
         </section>
       )}
@@ -2914,7 +3549,7 @@ export default function Home() {
           activePetId={activePetId}
           petProgress={petProgress}
           inventory={inventory}
-          managementLocked={battleBusy || ["capture", "exam", "boss"].includes(phase)}
+          managementLocked={battleBusy || ["capture", "trainerBattle", "exam", "boss"].includes(phase)}
           onSetActivePet={setLeadPet}
           onEquipSkill={equipPetSkill}
           onMoveToStorage={movePetToStorage}
@@ -2931,6 +3566,20 @@ export default function Home() {
           onBuy={purchaseSupply}
           onClaim={claimResearchReward}
           onClose={() => setFieldCampOpen(false)}
+        />
+      )}
+
+      {highlandCampOpen && partner && (
+        <HighlandCampModal
+          inventory={inventory}
+          partyIds={ownedPetIds}
+          petProgress={petProgress}
+          partyHealth={partyHealth}
+          quest={chapterQuest}
+          onRest={healPartyAtCamp}
+          onBuy={purchaseSupply}
+          onReturnCity={() => { setHighlandCampOpen(false); go("city"); }}
+          onClose={() => setHighlandCampOpen(false)}
         />
       )}
 
