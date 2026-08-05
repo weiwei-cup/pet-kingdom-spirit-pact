@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { COLLISION_MASK_BITS, COLLISION_MASK_SIZE } from "./collision-mask-data";
 
 type Phase =
   | "title"
@@ -78,8 +79,6 @@ type ExplorationMapDefinition = {
   name: string;
   start: Position;
   interaction: Position;
-  walkable: MapRect[];
-  blocked?: MapRect[];
   grass?: MapRect[];
   missionTitle: string;
   missionText: string;
@@ -219,22 +218,6 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
       { x1: 58, y1: 22, x2: 74, y2: 43 },
       { x1: 56, y1: 60, x2: 72, y2: 75 },
     ],
-    walkable: [
-      { x1: 4, y1: 74, x2: 31, y2: 96 },
-      { x1: 20, y1: 88, x2: 51, y2: 96 },
-      { x1: 42, y1: 69, x2: 51, y2: 94 },
-      { x1: 39, y1: 63, x2: 72, y2: 81 },
-      { x1: 32, y1: 42, x2: 73, y2: 72 },
-      { x1: 49, y1: 33, x2: 87, y2: 63 },
-      { x1: 77, y1: 14, x2: 91, y2: 62 },
-      { x1: 24, y1: 17, x2: 91, y2: 31 },
-      { x1: 19, y1: 22, x2: 30, y2: 66 },
-    ],
-    blocked: [
-      { x1: 47, y1: 48, x2: 52, y2: 57 },
-      { x1: 57, y1: 43, x2: 61, y2: 50 },
-      { x1: 72, y1: 64, x2: 77, y2: 73 },
-    ],
   },
   city: {
     id: "city",
@@ -245,17 +228,6 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionTitle: "拜访彩虹学院",
     missionText: "沿中央大道绕过星泉，在学院门前与诺亚交谈。",
     collisionText: "水渠、花坛、雕像和建筑都不能穿过。",
-    walkable: [
-      { x1: 44, y1: 68, x2: 56, y2: 97 },
-      { x1: 35, y1: 57, x2: 65, y2: 81 },
-      { x1: 22, y1: 31, x2: 78, y2: 70 },
-      { x1: 7, y1: 43, x2: 93, y2: 57 },
-      { x1: 44, y1: 17, x2: 56, y2: 42 },
-      { x1: 22, y1: 17, x2: 78, y2: 31 },
-    ],
-    blocked: [
-      { x1: 42, y1: 40, x2: 58, y2: 58 },
-    ],
   },
   festival: {
     id: "festival",
@@ -266,19 +238,6 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionTitle: "走向庆典共鸣环",
     missionText: "穿过灯市，前往中央彩虹纹章与历代训练师会合。",
     collisionText: "摊位、花台、灯架和舞台边缘不能穿过。",
-    walkable: [
-      { x1: 44, y1: 75, x2: 56, y2: 96 },
-      { x1: 18, y1: 25, x2: 82, y2: 86 },
-      { x1: 5, y1: 44, x2: 95, y2: 57 },
-      { x1: 41, y1: 19, x2: 59, y2: 33 },
-    ],
-    blocked: [
-      { x1: 34, y1: 4, x2: 66, y2: 23 },
-      { x1: 19, y1: 24, x2: 30, y2: 41 },
-      { x1: 70, y1: 24, x2: 81, y2: 41 },
-      { x1: 20, y1: 60, x2: 31, y2: 78 },
-      { x1: 69, y1: 60, x2: 80, y2: 78 },
-    ],
   },
   rupture: {
     id: "rupture",
@@ -289,42 +248,16 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionTitle: "稳定三处灵契节点",
     missionText: "沿三条安全石路逐一接近发光晶柱，最后前往上方裂隙台。",
     collisionText: "深渊、断桥、裂缝和坍塌建筑都不能通行。",
-    walkable: [
-      { x1: 5, y1: 75, x2: 27, y2: 96 },
-      { x1: 20, y1: 79, x2: 52, y2: 89 },
-      { x1: 42, y1: 65, x2: 58, y2: 86 },
-      { x1: 45, y1: 20, x2: 56, y2: 71 },
-      { x1: 18, y1: 43, x2: 48, y2: 56 },
-      { x1: 13, y1: 27, x2: 28, y2: 65 },
-      { x1: 52, y1: 43, x2: 84, y2: 56 },
-      { x1: 73, y1: 30, x2: 88, y2: 66 },
-      { x1: 40, y1: 8, x2: 61, y2: 29 },
-    ],
   },
   aftermath: {
     id: "aftermath",
     image: SCENE_ART.aftermath,
     name: "万灵神殿 · 月白回廊",
     start: { x: 50, y: 92 },
-    interaction: { x: 50, y: 11 },
+    interaction: { x: 50, y: 18 },
     missionTitle: "追上安琪儿",
     missionText: "中央晶核阻断了直路，从左右回廊绕行至记忆祭台。",
     collisionText: "虚空、能量渠、立柱、雕像和破碎晶核不能穿过。",
-    walkable: [
-      { x1: 43, y1: 62, x2: 57, y2: 97 },
-      { x1: 20, y1: 55, x2: 80, y2: 70 },
-      { x1: 18, y1: 28, x2: 39, y2: 68 },
-      { x1: 61, y1: 28, x2: 82, y2: 68 },
-      { x1: 20, y1: 17, x2: 80, y2: 34 },
-      { x1: 44, y1: 8, x2: 56, y2: 30 },
-    ],
-    blocked: [
-      { x1: 40, y1: 35, x2: 60, y2: 60 },
-      { x1: 24, y1: 47, x2: 29, y2: 60 },
-      { x1: 71, y1: 47, x2: 76, y2: 60 },
-      { x1: 34, y1: 24, x2: 39, y2: 37 },
-      { x1: 61, y1: 24, x2: 66, y2: 37 },
-    ],
   },
 };
 
@@ -334,14 +267,32 @@ const RUPTURE_NODE_POSITIONS: Position[] = [
   { x: 50, y: 74 },
 ];
 
+const collisionMaskCache = new Map<ExplorationPhase, Uint8Array>();
+
 function inMapRect(position: Position, rect: MapRect) {
   return position.x >= rect.x1 && position.x <= rect.x2 && position.y >= rect.y1 && position.y <= rect.y2;
 }
 
 function isMapWalkable(map: ExplorationMapDefinition, position: Position) {
-  const onGround = map.walkable.some((zone) => inMapRect(position, zone));
-  const insideObstacle = map.blocked?.some((zone) => inMapRect(position, zone)) ?? false;
-  return onGround && !insideObstacle;
+  const encoded = COLLISION_MASK_BITS[map.id];
+  let bytes = collisionMaskCache.get(map.id);
+  if (!bytes) {
+    const binary = globalThis.atob(encoded);
+    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    collisionMaskCache.set(map.id, bytes);
+  }
+
+  // Sample the width of the character's feet, not the middle of the sprite.
+  // This prevents a single green edge pixel from letting the body overlap a cliff.
+  return [-0.58, 0, 0.58].every((offsetX) => {
+    const x = position.x + offsetX;
+    const y = position.y;
+    if (x < 0 || x >= 100 || y < 0 || y >= 100) return false;
+    const maskX = Math.floor((x / 100) * COLLISION_MASK_SIZE.width);
+    const maskY = Math.floor((y / 100) * COLLISION_MASK_SIZE.height);
+    const index = maskY * COLLISION_MASK_SIZE.width + maskX;
+    return Boolean(bytes[index >> 3] & (1 << (index & 7)));
+  });
 }
 
 function isGrassTile(map: ExplorationMapDefinition, position: Position) {
