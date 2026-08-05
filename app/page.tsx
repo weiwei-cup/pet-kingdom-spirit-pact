@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { COLLISION_MASK_BITS, COLLISION_MASK_SIZE } from "./collision-mask-data";
+import { canStandAt, integrateActorMovement, isEncounterTerrain } from "./overworld-engine";
 
 type Phase =
   | "title"
@@ -115,7 +115,6 @@ type ExplorationMapDefinition = {
   name: string;
   start: Position;
   interaction: Position;
-  grass?: MapRect[];
   missionTitle: string;
   missionText: string;
   collisionText: string;
@@ -610,11 +609,6 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionTitle: "第一次野外捕捉",
     missionText: "沿真实道路穿过高草，再从中央石阶绕向东北城门。",
     collisionText: "这里是河面、峭壁或装饰障碍，不能通行。",
-    grass: [
-      { x1: 31, y1: 42, x2: 47, y2: 61 },
-      { x1: 58, y1: 22, x2: 74, y2: 43 },
-      { x1: 56, y1: 60, x2: 72, y2: 75 },
-    ],
   },
   city: {
     id: "city",
@@ -678,36 +672,8 @@ const RUPTURE_NODE_POSITIONS: Position[] = [
   { x: 50, y: 74 },
 ];
 
-const collisionMaskCache = new Map<ExplorationPhase, Uint8Array>();
-
 function inMapRect(position: Position, rect: MapRect) {
   return position.x >= rect.x1 && position.x <= rect.x2 && position.y >= rect.y1 && position.y <= rect.y2;
-}
-
-function isMapWalkable(map: ExplorationMapDefinition, position: Position) {
-  const encoded = COLLISION_MASK_BITS[map.id];
-  let bytes = collisionMaskCache.get(map.id);
-  if (!bytes) {
-    const binary = globalThis.atob(encoded);
-    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    collisionMaskCache.set(map.id, bytes);
-  }
-
-  // Sample the width of the character's feet, not the middle of the sprite.
-  // This prevents a single green edge pixel from letting the body overlap a cliff.
-  return [-0.58, 0, 0.58].every((offsetX) => {
-    const x = position.x + offsetX;
-    const y = position.y;
-    if (x < 0 || x >= 100 || y < 0 || y >= 100) return false;
-    const maskX = Math.floor((x / 100) * COLLISION_MASK_SIZE.width);
-    const maskY = Math.floor((y / 100) * COLLISION_MASK_SIZE.height);
-    const index = maskY * COLLISION_MASK_SIZE.width + maskX;
-    return Boolean(bytes[index >> 3] & (1 << (index & 7)));
-  });
-}
-
-function isGrassTile(map: ExplorationMapDefinition, position: Position) {
-  return map.grass?.some((zone) => inMapRect(position, zone)) ?? false;
 }
 
 function distance(a: Position, b: Position) {
@@ -1022,6 +988,7 @@ function moveToward(current: number, target: number, maxDelta: number) {
 }
 
 function useSmoothActor(options: {
+  worldKey: string;
   enabled: boolean;
   startPosition: Position;
   initialFacing: RoadFacing;
@@ -1040,10 +1007,10 @@ function useSmoothActor(options: {
   const configRef = useRef(options);
   const keysRef = useRef<Set<string>>(new Set());
   const touchDirectionRef = useRef<Position>({ x: 0, y: 0 });
-  const touchStartedAtRef = useRef(0);
-  const touchReleaseTimerRef = useRef<number | null>(null);
   const runtimeRef = useRef({
+    worldKey: options.worldKey,
     position: { ...options.startPosition },
+    previousPosition: { ...options.startPosition },
     velocity: { x: 0, y: 0 },
     camera: { x: 0, y: 0, initialized: false },
     facing: options.initialFacing,
@@ -1055,6 +1022,22 @@ function useSmoothActor(options: {
 
   useEffect(() => {
     configRef.current = options;
+    if (runtimeRef.current.worldKey !== options.worldKey) {
+      runtimeRef.current = {
+        worldKey: options.worldKey,
+        position: { ...options.startPosition },
+        previousPosition: { ...options.startPosition },
+        velocity: { x: 0, y: 0 },
+        camera: { x: 0, y: 0, initialized: false },
+        facing: options.initialFacing,
+        moving: false,
+        travel: 0,
+        lastCommit: 0,
+        lastBump: 0,
+      };
+      keysRef.current.clear();
+      touchDirectionRef.current = { x: 0, y: 0 };
+    }
     if (!options.enabled) {
       keysRef.current.clear();
       touchDirectionRef.current = { x: 0, y: 0 };
@@ -1065,18 +1048,11 @@ function useSmoothActor(options: {
 
   const startTouchDirection = useCallback((dx: number, dy: number) => {
     if (!configRef.current.enabled) return;
-    if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
-    touchStartedAtRef.current = performance.now();
     touchDirectionRef.current = { x: dx, y: dy };
   }, []);
 
   const stopTouchDirection = useCallback(() => {
-    const remaining = Math.max(0, 48 - (performance.now() - touchStartedAtRef.current));
-    if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
-    touchReleaseTimerRef.current = window.setTimeout(() => {
-      touchDirectionRef.current = { x: 0, y: 0 };
-      touchReleaseTimerRef.current = null;
-    }, remaining);
+    touchDirectionRef.current = { x: 0, y: 0 };
   }, []);
 
   const interact = useCallback(() => {
@@ -1087,10 +1063,9 @@ function useSmoothActor(options: {
   useEffect(() => {
     const movementKeys = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
     const keys = keysRef.current;
-    const keyStartedAt = new Map<string, number>();
-    const releaseTimers = new Map<string, number>();
     let animationFrame = 0;
     let lastFrame = performance.now();
+    let accumulator = 0;
 
     const stopInput = () => {
       keys.clear();
@@ -1102,12 +1077,7 @@ function useSmoothActor(options: {
       const config = configRef.current;
       if (movementKeys.has(key)) {
         event.preventDefault();
-        if (config.enabled && !keys.has(key)) {
-          const releaseTimer = releaseTimers.get(key);
-          if (releaseTimer !== undefined) window.clearTimeout(releaseTimer);
-          keyStartedAt.set(key, performance.now());
-          keys.add(key);
-        }
+        if (config.enabled) keys.add(key);
         return;
       }
       if (key === "e") {
@@ -1120,20 +1090,16 @@ function useSmoothActor(options: {
       const key = event.key.toLowerCase();
       if (!movementKeys.has(key)) return;
       event.preventDefault();
-      const remaining = Math.max(0, 48 - (performance.now() - (keyStartedAt.get(key) ?? 0)));
-      const release = window.setTimeout(() => {
-        keys.delete(key);
-        keyStartedAt.delete(key);
-        releaseTimers.delete(key);
-      }, remaining);
-      releaseTimers.set(key, release);
+      keys.delete(key);
     };
 
     const renderFrame = (now: number) => {
       const config = configRef.current;
       const runtime = runtimeRef.current;
-      const dt = Math.min(0.034, Math.max(0, (now - lastFrame) / 1000));
+      const elapsed = Math.min(0.08, Math.max(0, (now - lastFrame) / 1000));
       lastFrame = now;
+      const fixedStep = 1 / 60;
+      accumulator = Math.min(accumulator + elapsed, fixedStep * 5);
       const keyboardX = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
       const keyboardY = (keys.has("arrowdown") || keys.has("s") ? 1 : 0) - (keys.has("arrowup") || keys.has("w") ? 1 : 0);
       const rawX = config.enabled ? keyboardX + touchDirectionRef.current.x : 0;
@@ -1141,42 +1107,44 @@ function useSmoothActor(options: {
       const inputMagnitude = Math.hypot(rawX, rawY);
       const inputX = inputMagnitude > 0 ? rawX / inputMagnitude : 0;
       const inputY = inputMagnitude > 0 ? rawY / inputMagnitude : 0;
-      const acceleration = inputMagnitude > 0 ? 1750 : 2300;
-      runtime.velocity.x = moveToward(runtime.velocity.x, inputX * config.maxSpeed, acceleration * dt);
-      runtime.velocity.y = moveToward(runtime.velocity.y, inputY * config.maxSpeed, acceleration * dt);
-      if (Math.abs(runtime.velocity.x) < 0.5) runtime.velocity.x = 0;
-      if (Math.abs(runtime.velocity.y) < 0.5) runtime.velocity.y = 0;
-
       const worldWidth = Math.max(1, config.worldSize.width);
       const worldHeight = Math.max(1, config.worldSize.height);
-      const before = runtime.position;
-      let next = { ...before };
+      let movedPixels = 0;
+      let requestedPixels = 0;
       let blocked = false;
-      const deltaX = runtime.velocity.x * dt;
-      const deltaY = runtime.velocity.y * dt;
-      const requestedPixels = Math.hypot(deltaX, deltaY);
-      if (Math.abs(deltaX) > 0.001) {
-        const candidate = { x: next.x + (deltaX / worldWidth) * 100, y: next.y };
-        if (config.isWalkable(candidate)) next = candidate;
-        else {
-          runtime.velocity.x = 0;
-          blocked = true;
-        }
-      }
-      if (Math.abs(deltaY) > 0.001) {
-        const candidate = { x: next.x, y: next.y + (deltaY / worldHeight) * 100 };
-        if (config.isWalkable(candidate)) next = candidate;
-        else {
-          runtime.velocity.y = 0;
-          blocked = true;
-        }
+      let simulationSteps = 0;
+
+      while (accumulator >= fixedStep && simulationSteps < 5) {
+        runtime.previousPosition = { ...runtime.position };
+        const acceleration = inputMagnitude > 0 ? 3200 : 4400;
+        runtime.velocity.x = moveToward(runtime.velocity.x, inputX * config.maxSpeed, acceleration * fixedStep);
+        runtime.velocity.y = moveToward(runtime.velocity.y, inputY * config.maxSpeed, acceleration * fixedStep);
+        if (Math.abs(runtime.velocity.x) < 0.5) runtime.velocity.x = 0;
+        if (Math.abs(runtime.velocity.y) < 0.5) runtime.velocity.y = 0;
+
+        const deltaPixels = {
+          x: runtime.velocity.x * fixedStep,
+          y: runtime.velocity.y * fixedStep,
+        };
+        requestedPixels += Math.hypot(deltaPixels.x, deltaPixels.y);
+        const movement = integrateActorMovement({
+          position: runtime.position,
+          deltaPixels,
+          worldSize: { width: worldWidth, height: worldHeight },
+          isWalkable: config.isWalkable,
+        });
+        runtime.position = movement.position;
+        runtime.travel += movement.movedPixels;
+        movedPixels += movement.movedPixels;
+        if (movement.blockedX) runtime.velocity.x = 0;
+        if (movement.blockedY) runtime.velocity.y = 0;
+        blocked ||= movement.blockedX || movement.blockedY;
+        accumulator -= fixedStep;
+        simulationSteps += 1;
       }
 
-      const movedPixels = Math.hypot(((next.x - before.x) / 100) * worldWidth, ((next.y - before.y) / 100) * worldHeight);
       if (movedPixels > 0.001) {
-        runtime.position = next;
-        runtime.travel += movedPixels;
-        config.onPosition({ ...next }, movedPixels);
+        config.onPosition({ ...runtime.position }, movedPixels);
       }
       if (blocked && inputMagnitude > 0 && movedPixels < Math.max(0.4, requestedPixels * 0.35) && now - runtime.lastBump > 300) {
         runtime.lastBump = now;
@@ -1187,7 +1155,7 @@ function useSmoothActor(options: {
         config.onCommit({ ...runtime.position });
       }
 
-      const moving = movedPixels > 0.08 && Math.hypot(runtime.velocity.x, runtime.velocity.y) > 10;
+      const moving = (simulationSteps === 0 ? runtime.moving : movedPixels > 0.04) && Math.hypot(runtime.velocity.x, runtime.velocity.y) > 10;
       const facingX = inputMagnitude > 0 ? inputX : runtime.velocity.x;
       const facingY = inputMagnitude > 0 ? inputY : runtime.velocity.y;
       if (Math.abs(facingX) > 0.05 || Math.abs(facingY) > 0.05) {
@@ -1200,8 +1168,13 @@ function useSmoothActor(options: {
       const stage = stageRef.current;
       const viewport = config.viewportRef.current;
       if (player && frame && stage && viewport) {
-        const actorX = (runtime.position.x / 100) * worldWidth;
-        const actorY = (runtime.position.y / 100) * worldHeight;
+        const interpolation = Math.min(1, accumulator / fixedStep);
+        const renderPosition = {
+          x: runtime.previousPosition.x + (runtime.position.x - runtime.previousPosition.x) * interpolation,
+          y: runtime.previousPosition.y + (runtime.position.y - runtime.previousPosition.y) * interpolation,
+        };
+        const actorX = (renderPosition.x / 100) * worldWidth;
+        const actorY = (renderPosition.y / 100) * worldHeight;
         player.style.transform = `translate3d(${actorX}px, ${actorY}px, 0) translate(-50%, -68%)`;
         player.classList.toggle("is-walking", moving);
         for (const direction of ["up", "down", "left", "right"] as RoadFacing[]) player.classList.toggle(`facing-${direction}`, runtime.facing === direction);
@@ -1217,7 +1190,7 @@ function useSmoothActor(options: {
         if (!runtime.camera.initialized) {
           runtime.camera = { x: targetCameraX, y: targetCameraY, initialized: true };
         } else {
-          const cameraBlend = 1 - Math.exp(-12 * dt);
+          const cameraBlend = 1 - Math.exp(-16 * elapsed);
           runtime.camera.x += (targetCameraX - runtime.camera.x) * cameraBlend;
           runtime.camera.y += (targetCameraY - runtime.camera.y) * cameraBlend;
         }
@@ -1233,8 +1206,6 @@ function useSmoothActor(options: {
     return () => {
       window.cancelAnimationFrame(animationFrame);
       stopInput();
-      for (const timer of releaseTimers.values()) window.clearTimeout(timer);
-      if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
       window.removeEventListener("keydown", keydown);
       window.removeEventListener("keyup", keyup);
       window.removeEventListener("blur", stopInput);
@@ -1293,6 +1264,7 @@ function HomeScene({
 }) {
   const readyToLeave = discoveries.length === Object.keys(HOME_INTERACTIONS).length;
   const { stageRef: homeStageRef, playerRef: homePlayerRef, frameRef: homeFrameRef, startTouchDirection: startHomeTouch, stopTouchDirection: stopHomeTouch, interact: interactAtHome } = useSmoothActor({
+    worldKey: "home",
     enabled: !disabled,
     startPosition,
     initialFacing: "down",
@@ -1391,13 +1363,14 @@ function ExplorationScene({
     ? map.image
     : `${map.image}${map.image.includes("?") ? "&" : "?"}retry=${mapLoadAttempt}`;
   const { stageRef, playerRef, frameRef, startTouchDirection, stopTouchDirection, interact } = useSmoothActor({
+    worldKey: map.id,
     enabled: mapReady && !movementDisabled,
     startPosition,
     initialFacing,
     worldSize: { width: mapCamera.width, height: mapCamera.height },
     viewportRef: fieldViewportRef,
     maxSpeed: 230,
-    isWalkable: (position) => isMapWalkable(map, position),
+    isWalkable: (position) => canStandAt(map.id, position),
     onPosition,
     onCommit,
     onInteract,
@@ -1937,7 +1910,7 @@ export default function Home() {
   const handleRoadPosition = useCallback((position: Position, distancePixels: number) => {
     roadPositionLiveRef.current = position;
     if (!activeMap || encounterPendingRef.current) return;
-    const inGrass = isGrassTile(activeMap, position);
+    const inGrass = isEncounterTerrain(activeMap.id, position);
     if (inGrass !== roadInGrassRef.current) {
       roadInGrassRef.current = inGrass;
       setRoadInGrass(inGrass);

@@ -1178,7 +1178,7 @@ img {
 }
 
 .map-player.is-walking .map-player-frame {
-  animation: mapPlayerFootfall 280ms steps(2, end) infinite;
+  animation: none;
 }
 
 .map-player.is-bumping {
@@ -3651,11 +3651,6 @@ img {
 @keyframes mapFootShadow {
   0%, 100% { transform: translateX(-50%) scaleX(1); opacity: .52; }
   50% { transform: translateX(-50%) scaleX(.72); opacity: .34; }
-}
-
-@keyframes mapPlayerFootfall {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
 }
 
 @keyframes mapCompanionTrot {
