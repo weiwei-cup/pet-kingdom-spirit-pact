@@ -20,9 +20,10 @@ type Phase =
   | "ending";
 
 type PartnerId = "leaf" | "metal" | "tide";
-type PetArtId = PartnerId | "wild" | "bird" | "guardian";
+type NewPetId = "ember" | "moss" | "spark" | "frost" | "lantern" | "breeze";
+type PetArtId = PartnerId | "wild" | "bird" | "guardian" | NewPetId;
 type PetSpeciesId = PetArtId;
-type RouteEncounterId = "wild" | "bird";
+type RouteEncounterId = "wild" | "bird" | "ember" | "moss" | "spark";
 type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "angela";
 type Position = { x: number; y: number };
 type Size = { width: number; height: number };
@@ -31,7 +32,7 @@ type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
 type CollectionView = "bag" | "dex";
 type HomeDiscovery = "photo" | "letter" | "breakfast";
 type HomeStoryId = "wake" | HomeDiscovery | "door";
-type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit";
+type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit" | "fire" | "earth" | "lightning" | "ice";
 type PetStats = { hp: number; attack: number; defense: number; spirit: number; speed: number };
 type PetSkill = { name: string; level: number; element: PetElement; power: number | null; description: string };
 type PetProgress = { id: PetSpeciesId; level: number; experience: number; equippedSkills: string[] };
@@ -165,9 +166,15 @@ const PET_ART: Record<PetArtId, string> = {
   wild: "./pixel/pet-wild.png?v=2",
   bird: "./pixel/pet-bird.png?v=2",
   guardian: "./pixel/pet-guardian.png?v=2",
+  ember: "./pixel/pet-ember.png?v=1",
+  moss: "./pixel/pet-moss.png?v=1",
+  spark: "./pixel/pet-spark.png?v=1",
+  frost: "./pixel/pet-frost.png?v=1",
+  lantern: "./pixel/pet-lantern.png?v=1",
+  breeze: "./pixel/pet-breeze.png?v=1",
 };
 
-const PET_SPECIES_ORDER: PetSpeciesId[] = ["leaf", "metal", "tide", "wild", "bird", "guardian"];
+const PET_SPECIES_ORDER: PetSpeciesId[] = ["leaf", "metal", "tide", "wild", "bird", "guardian", "ember", "moss", "spark", "frost", "lantern", "breeze"];
 
 const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
   leaf: {
@@ -284,6 +291,120 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
       { name: "记忆回响", level: 18, element: "spirit", power: 82, description: "记忆越完整，造成的灵契伤害越高。" },
     ],
   },
+  ember: {
+    id: "ember",
+    number: 7,
+    name: "火绒狸",
+    element: "fire",
+    elementLabel: "火焰系",
+    category: "火绒宠物",
+    role: "强攻 · 灼烧",
+    habitat: "青崖水道向阳岩坡与黄金灯市",
+    rarity: "少见",
+    defaultLevel: 4,
+    description: "会把白天收集的热量藏进巨大耳绒，兴奋时尾巴便燃成漩涡。它很爱恶作剧，却从不让火星靠近伙伴的行囊。",
+    stats: { hp: 55, attack: 72, defense: 39, spirit: 57, speed: 68 },
+    skills: [
+      { name: "火尾回旋", level: 1, element: "fire", power: 44, description: "旋转燃烧的尾巴横扫目标，有小概率留下灼热。" },
+      { name: "余烬潜行", level: 4, element: "fire", power: null, description: "藏进余烬的微光里，提高速度与下一次攻击的威力。" },
+      { name: "燎原扑击", level: 10, element: "fire", power: 70, description: "从火光中跃出猛扑，目标处于异常状态时威力提高。" },
+    ],
+  },
+  moss: {
+    id: "moss",
+    number: 8,
+    name: "苔甲龟",
+    element: "earth",
+    elementLabel: "岩土系",
+    category: "苔岩宠物",
+    role: "坚守 · 回复",
+    habitat: "青崖水道湿润岩台与东之高原",
+    rarity: "常见",
+    defaultLevel: 4,
+    description: "背甲由会缓慢生长的岩片组成，年长后会长出小花。迷路的人只要跟着甲片上苔藓较亮的一侧，就能找到水源。",
+    stats: { hp: 80, attack: 42, defense: 82, spirit: 45, speed: 25 },
+    skills: [
+      { name: "岩壳撞击", level: 1, element: "earth", power: 40, description: "缩起身体推动厚重背甲，稳稳撞向目标。" },
+      { name: "苔息", level: 4, element: "plant", power: null, description: "让背甲上的苔藓释放清新气息，恢复体力并提高防御。" },
+      { name: "地脉震荡", level: 10, element: "earth", power: 70, description: "与地下岩层共鸣，防御越高造成的震荡越强。" },
+    ],
+  },
+  spark: {
+    id: "spark",
+    number: 9,
+    name: "霆尾貂",
+    element: "lightning",
+    elementLabel: "雷电系",
+    category: "霆尾宠物",
+    role: "高速 · 爆发",
+    habitat: "青崖雷鸣草甸与学院避雷尖塔",
+    rarity: "珍稀",
+    defaultLevel: 5,
+    description: "额前晶体能在雷雨到来前发亮。它会沿着训练师留下的脚印高速折返，把走散的伙伴一个个带回队伍。",
+    stats: { hp: 52, attack: 70, defense: 41, spirit: 61, speed: 88 },
+    skills: [
+      { name: "闪尾电击", level: 1, element: "lightning", power: 44, description: "挥动闪电形长尾发动先制电击。" },
+      { name: "蓄电跃迁", level: 5, element: "lightning", power: null, description: "储存游离电荷，大幅提高速度并强化下一次攻击。" },
+      { name: "霆光追击", level: 12, element: "lightning", power: 74, description: "化为折线雷光追击目标，速度领先时追加一次小型电击。" },
+    ],
+  },
+  frost: {
+    id: "frost",
+    number: 10,
+    name: "霜角鹿",
+    element: "ice",
+    elementLabel: "冰霜系",
+    category: "霜晶宠物",
+    role: "控场 · 灵能",
+    habitat: "东之高原雪线与月白回廊",
+    rarity: "珍稀",
+    defaultLevel: 8,
+    description: "晶角会记录见过的第一场雪。它经过的草叶只会短暂结霜，不会真正冻伤，因此常被高原旅人视为平安的征兆。",
+    stats: { hp: 64, attack: 50, defense: 60, spirit: 78, speed: 58 },
+    skills: [
+      { name: "晶角突", level: 1, element: "ice", power: 46, description: "用凝结霜晶的鹿角突击，并降低目标少量速度。" },
+      { name: "冷雾屏障", level: 8, element: "ice", power: null, description: "释放柔和冷雾形成屏障，降低本回合所受伤害。" },
+      { name: "极光冻结", level: 14, element: "ice", power: 76, description: "召来极光般的寒流，目标越慢威力越高。" },
+    ],
+  },
+  lantern: {
+    id: "lantern",
+    number: 11,
+    name: "星灯魟",
+    element: "spirit",
+    elementLabel: "灵契系",
+    category: "星灯宠物",
+    role: "灵能 · 回复",
+    habitat: "万灵神殿月白回廊与无月水面",
+    rarity: "珍稀",
+    defaultLevel: 10,
+    description: "它并不生活在海里，而是沿着灵契的微光在夜空漂游。胸前星灯会为怀念同一位伙伴的人亮起相同颜色。",
+    stats: { hp: 61, attack: 44, defense: 55, spirit: 92, speed: 64 },
+    skills: [
+      { name: "星屑波", level: 1, element: "spirit", power: 46, description: "扇动翼鳍洒出星屑状灵能波。" },
+      { name: "引灯归航", level: 10, element: "spirit", power: null, description: "点亮胸前星灯，恢复体力并清除一种负面状态。" },
+      { name: "星河俯冲", level: 16, element: "spirit", power: 80, description: "沿灵契光带俯冲，队伍中伙伴越多威力越稳定。" },
+    ],
+  },
+  breeze: {
+    id: "breeze",
+    number: 12,
+    name: "风铃羊",
+    element: "wind",
+    elementLabel: "飞行系",
+    category: "云绒宠物",
+    role: "支援 · 提速",
+    habitat: "彩虹城钟塔草坪与东之高原",
+    rarity: "少见",
+    defaultLevel: 6,
+    description: "云朵般的卷毛能托住身体短暂滑翔。它喜欢追着钟声奔跑，颈间两枚小铃只有在真正顺风时才会一起响起。",
+    stats: { hp: 68, attack: 45, defense: 51, spirit: 71, speed: 74 },
+    skills: [
+      { name: "风铃冲击", level: 1, element: "wind", power: 40, description: "借铃声压缩气流，远距离冲击目标。" },
+      { name: "云絮轻身", level: 6, element: "wind", power: null, description: "让队伍被轻风托起，提高速度与闪避能力。" },
+      { name: "回音风场", level: 12, element: "wind", power: 68, description: "展开回音风场，连续行动时威力逐步提升。" },
+    ],
+  },
 };
 
 const STARTER_SIGHTINGS: PetSpeciesId[] = ["leaf", "metal", "tide"];
@@ -298,7 +419,10 @@ function isPetSpeciesId(value: unknown): value is PetSpeciesId {
 
 function storySightingsForPhase(phase: Phase) {
   const sightings = [...STARTER_SIGHTINGS];
-  if (["exam", "festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("bird");
+  if (["exam", "festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("bird", "breeze");
+  if (["festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("ember", "spark");
+  if (["rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("frost", "lantern");
+  if (["aftermath", "ending"].includes(phase)) sightings.push("moss");
   if (["boss", "aftermath", "ending"].includes(phase)) sightings.push("guardian");
   return sightings;
 }
@@ -364,6 +488,10 @@ function petBattleFxKind(element: PetElement): BattleFxKind {
   if (element === "plant") return "leaf";
   if (element === "metal") return "metal";
   if (element === "water") return "tide";
+  if (element === "fire") return "claw";
+  if (element === "earth") return "guard";
+  if (element === "lightning") return "wind";
+  if (element === "ice") return "tide";
   if (element === "wind") return "wind";
   if (element === "spirit") return "memory";
   return "claw";
@@ -434,7 +562,23 @@ const MEMORY_TEXT = [
 const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
   wild: { id: "wild", name: "茸角鼠", kind: "猛兽系", level: 4, maxHp: 32 },
   bird: { id: "bird", name: "银羽雀", kind: "飞行系", level: 5, maxHp: 36 },
+  ember: { id: "ember", name: "火绒狸", kind: "火焰系", level: 4, maxHp: 34 },
+  moss: { id: "moss", name: "苔甲龟", kind: "岩土系", level: 4, maxHp: 42 },
+  spark: { id: "spark", name: "霆尾貂", kind: "雷电系", level: 5, maxHp: 30 },
 };
+
+function isRouteEncounterId(value: unknown): value is RouteEncounterId {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(ROUTE_ENCOUNTERS, value);
+}
+
+function randomRouteEncounter(): RouteEncounterId {
+  const roll = Math.random();
+  if (roll < 0.34) return "wild";
+  if (roll < 0.52) return "bird";
+  if (roll < 0.70) return "ember";
+  if (roll < 0.88) return "moss";
+  return "spark";
+}
 
 const MAP_PIXEL_SIZE = { width: 1536, height: 1024 };
 const HOME_PIXEL_SIZE = { width: 1672, height: 941 };
@@ -517,12 +661,12 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
   name: [SCENE_ART.home],
   home: [SCENE_ART.shelter],
-  shelter: [SCENE_ART.road],
+  shelter: [SCENE_ART.road, PET_ART.wild, PET_ART.bird, PET_ART.ember, PET_ART.moss, PET_ART.spark],
   road: [SCENE_ART.city],
   capture: [SCENE_ART.city],
-  city: [SCENE_ART.exam],
-  exam: [SCENE_ART.festival],
-  festival: [SCENE_ART.rupture],
+  city: [SCENE_ART.exam, PET_ART.breeze],
+  exam: [SCENE_ART.festival, PET_ART.ember, PET_ART.spark],
+  festival: [SCENE_ART.rupture, PET_ART.frost, PET_ART.lantern],
   rupture: [SCENE_ART.boss],
   boss: [SCENE_ART.aftermath],
   aftermath: [SCENE_ART.ending],
@@ -1543,7 +1687,10 @@ export default function Home() {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
     prepareExplorationMap(next);
     if (next === "shelter") registerPetSightings(STARTER_SIGHTINGS);
-    if (next === "exam") registerPetSightings(["bird"]);
+    if (next === "exam") registerPetSightings(["bird", "breeze"]);
+    if (next === "festival") registerPetSightings(["ember", "spark"]);
+    if (next === "rupture") registerPetSightings(["frost", "lantern"]);
+    if (next === "aftermath") registerPetSightings(["moss"]);
     if (next === "boss") registerPetSightings(["guardian"]);
     if (next === "exam" && activePetHp) setExamHp(activePetHp);
     if (next === "boss" && activePetHp) setBossPlayerHp(activePetHp);
@@ -1614,7 +1761,7 @@ export default function Home() {
       const saved = JSON.parse(raw) as SaveData;
       const restoredPartnerId = saved.partnerId && saved.partnerId in PARTNERS ? saved.partnerId : null;
       const restoredCapturedId: RouteEncounterId | null = saved.captured
-        ? saved.capturedPetId === "bird" ? "bird" : "wild"
+        ? isRouteEncounterId(saved.capturedPetId) ? saved.capturedPetId : "wild"
         : null;
       const restoredOwned = mergePetIds(
         (saved.ownedPetIds ?? []).filter(isPetSpeciesId),
@@ -1814,7 +1961,7 @@ export default function Home() {
     if (steps >= 9 || Math.random() < chance) {
       grassStepsRef.current = 0;
       setRoadPos(position);
-      beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
+      beginRouteEncounter(randomRouteEncounter());
     }
   }, [activeMap, beginRouteEncounter, captured, phase]);
 

@@ -3043,6 +3043,10 @@ img {
 .element-beast { --pet-accent: #e2aa61; --pet-deep: #704a31; }
 .element-wind { --pet-accent: #a9dbcd; --pet-deep: #3e7169; }
 .element-spirit { --pet-accent: #c2a2ec; --pet-deep: #59447d; }
+.element-fire { --pet-accent: #ff9862; --pet-deep: #7a352c; }
+.element-earth { --pet-accent: #c9b16b; --pet-deep: #5e5634; }
+.element-lightning { --pet-accent: #ffe06e; --pet-deep: #5f5430; }
+.element-ice { --pet-accent: #9fe6f4; --pet-deep: #315f79; }
 
 .pet-entry {
   position: relative;
