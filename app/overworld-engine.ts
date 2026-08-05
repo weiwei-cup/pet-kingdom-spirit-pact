@@ -4,6 +4,11 @@ export type OverworldMapId = keyof typeof WALKABLE_TERRAIN_BITS;
 export type WorldPosition = { x: number; y: number };
 export type WorldSize = { width: number; height: number };
 export type TerrainKind = "blocked" | "ground" | "grass";
+export type SceneDialogueLocks = {
+  city: boolean;
+  festival: boolean;
+  aftermath: boolean;
+};
 
 type TerrainRect = { x1: number; y1: number; x2: number; y2: number; kind: Exclude<TerrainKind, "blocked"> };
 
@@ -65,6 +70,13 @@ export function terrainAt(mapId: OverworldMapId, position: WorldPosition): Terra
     position.x >= item.x1 && position.x <= item.x2 && position.y >= item.y1 && position.y <= item.y2
   ));
   return zone?.kind ?? "ground";
+}
+
+export function hasActiveSceneDialogue(mapId: OverworldMapId, locks: SceneDialogueLocks) {
+  if (mapId === "city") return locks.city;
+  if (mapId === "festival") return locks.festival;
+  if (mapId === "aftermath") return locks.aftermath;
+  return false;
 }
 
 // The coordinate is the center of the actor's feet, not the center of the art.

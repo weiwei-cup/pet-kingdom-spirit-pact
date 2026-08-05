@@ -23,7 +23,7 @@ import {
   type FieldResearch,
   type SupplyOfferId,
 } from "./adventure-rules";
-import { canStandAt, integrateActorMovement, isEncounterTerrain, terrainAt } from "./overworld-engine";
+import { canStandAt, hasActiveSceneDialogue, integrateActorMovement, isEncounterTerrain, terrainAt } from "./overworld-engine";
 import { BATTLE_STATUS_LABELS, applyStatusTick, enemyAction, shouldInflictStatus, statusForElement, type BattleStatus } from "./trainer-battle-rules";
 import {
   HIGHLAND_SIDE_QUESTS,
@@ -2333,6 +2333,9 @@ export default function Home() {
   const go = useCallback((next: Phase) => {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
     prepareExplorationMap(next);
+    setCityDialogueOpen(false);
+    setFestivalDialogueOpen(false);
+    setAftermathDialogueOpen(false);
     if (next === "shelter") registerPetSightings(STARTER_SIGHTINGS);
     if (next === "exam") registerPetSightings(["bird", "breeze"]);
     if (next === "festival") registerPetSightings(["ember", "spark"]);
@@ -2345,9 +2348,6 @@ export default function Home() {
     if (next === "observatory") registerPetSightings(["frost", "spark", "lantern", "guardian"]);
     if (next === "exam" && activePetHpRef.current) setExamHp(activePetHpRef.current);
     if (next === "boss" && activePetHpRef.current) setBossPlayerHp(activePetHpRef.current);
-    if (next === "city") setCityDialogueOpen(false);
-    if (next === "festival") setFestivalDialogueOpen(false);
-    if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
   }, [playTone, prepareExplorationMap, registerPetSightings]);
 
@@ -3711,7 +3711,7 @@ export default function Home() {
             { label: "继续探索", done: false },
           ]}
           mapReady={mapAssetReady}
-          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || chapterDialogue !== null || sideQuestDialogue !== null || collectionView !== null || fieldCampOpen || highlandCampOpen || questLogOpen || helpOpen}
+          movementDisabled={encounterPending || hasActiveSceneDialogue(activeMap.id, { city: cityDialogueOpen, festival: festivalDialogueOpen, aftermath: aftermathDialogueOpen }) || chapterDialogue !== null || sideQuestDialogue !== null || collectionView !== null || fieldCampOpen || highlandCampOpen || questLogOpen || helpOpen}
           onMapReady={setLoadedMapId}
           markers={<>
             {phase === "road" && <>

@@ -11,7 +11,7 @@ const [{ text: bundledEngine }] = (await build({
 })).outputFiles;
 
 const engineUrl = `data:text/javascript;base64,${Buffer.from(bundledEngine).toString("base64")}`;
-const { canStandAt, integrateActorMovement, isEncounterTerrain, terrainAt } = await import(engineUrl);
+const { canStandAt, hasActiveSceneDialogue, integrateActorMovement, isEncounterTerrain, terrainAt } = await import(engineUrl);
 
 const routes = [
   { map: "road", start: { x: 16.7, y: 84.4 }, goal: { x: 84.5, y: 15.5 }, radius: 8 },
@@ -73,6 +73,11 @@ for (const position of [{ x: 39, y: 51 }, { x: 66, y: 32 }, { x: 64, y: 68 }]) {
 }
 assert.equal(terrainAt("road", { x: 16.7, y: 84.4 }), "ground");
 assert.equal(isEncounterTerrain("city", { x: 50, y: 91 }), false);
+
+const staleCityDialogue = { city: true, festival: false, aftermath: false };
+assert.equal(hasActiveSceneDialogue("city", staleCityDialogue), true, "city dialogue must lock movement while it is visible");
+assert.equal(hasActiveSceneDialogue("festival", staleCityDialogue), false, "a stale city dialogue flag must not lock the festival map");
+assert.equal(hasActiveSceneDialogue("rupture", { city: false, festival: true, aftermath: false }), false, "a stale festival flag must not lock the rupture map");
 for (const position of [{ x: 28, y: 38 }, { x: 67, y: 66 }]) {
   assert.equal(isEncounterTerrain("highland", position), true, `highland scrub must trigger encounters at ${JSON.stringify(position)}`);
 }
