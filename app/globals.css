@@ -702,8 +702,9 @@ img {
   left: 0;
   overflow: hidden;
   transform-origin: top left;
-  transition: transform 80ms linear;
+  transition: none;
   will-change: transform;
+  backface-visibility: hidden;
   image-rendering: pixelated;
 }
 
@@ -1022,8 +1023,9 @@ img {
   left: 0;
   overflow: hidden;
   transform-origin: top left;
-  transition: transform 80ms linear;
+  transition: none;
   will-change: transform;
+  backface-visibility: hidden;
   image-rendering: pixelated;
 }
 
@@ -1135,11 +1137,15 @@ img {
 .map-player {
   position: absolute;
   z-index: 9;
+  top: 0;
+  left: 0;
   width: 68px;
   height: 68px;
-  transform: translate(-50%, -68%);
-  transition: left 80ms linear, top 80ms linear;
-  will-change: left, top;
+  transform: translate3d(0, 0, 0) translate(-50%, -68%);
+  transition: none;
+  will-change: transform;
+  backface-visibility: hidden;
+  contain: layout style;
   pointer-events: none;
   image-rendering: pixelated;
 }
@@ -1172,7 +1178,7 @@ img {
 }
 
 .map-player.is-walking .map-player-frame {
-  animation: mapPlayerFootfall 288ms steps(2, end) infinite;
+  animation: mapPlayerFootfall 280ms steps(2, end) infinite;
 }
 
 .map-player.is-bumping {

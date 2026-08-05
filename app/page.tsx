@@ -438,12 +438,9 @@ const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
 
 const MAP_PIXEL_SIZE = { width: 1536, height: 1024 };
 const HOME_PIXEL_SIZE = { width: 1672, height: 941 };
-const MOVEMENT_TICK_MS = 72;
-const ROAD_STEP = { x: 100 / 78, y: 100 / 52 };
 const ROAD_START: Position = { x: 16.7, y: 84.4 };
 const CITY_GATE: Position = { x: 84.5, y: 15.5 };
 const HOME_START: Position = { x: 42, y: 49 };
-const HOME_STEP = { x: 1.28, y: 1.92 };
 
 const HOME_INTERACTIONS: Record<HomeDiscovery, { position: Position; marker: Position; label: string; hint: string }> = {
   photo: { position: { x: 55, y: 34 }, marker: { x: 56, y: 22 }, label: "褪色合影", hint: "墙上那张合影似乎被人重新摆正过。" },
@@ -635,13 +632,14 @@ function Character({ name, variant = "player", small = false }: { name: string; 
   );
 }
 
-function MapPlayerSprite({ facing, moving, step }: { facing: RoadFacing; moving: boolean; step: number }) {
+function MapPlayerSprite({ facing, moving, step, frameRef }: { facing: RoadFacing; moving: boolean; step: number; frameRef?: React.Ref<HTMLSpanElement> }) {
   const row = { down: 0, left: 1, right: 2, up: 3 }[facing];
   const column = moving ? (Math.floor(step / 2) % 2 === 0 ? 0 : 2) : 1;
   const x = column === 0 ? 0 : column === 1 ? 50 : 100;
   const y = row === 0 ? 0 : row === 1 ? 100 / 3 : row === 2 ? 200 / 3 : 100;
   return (
     <span
+      ref={frameRef}
       className="map-player-frame"
       style={{ backgroundImage: `url(${MAP_PLAYER_ART})`, backgroundPosition: `${x}% ${y}%` }}
       aria-hidden="true"
@@ -874,32 +872,248 @@ function Dialogue({ lines, onComplete, backdrop }: { lines: DialogueLine[]; onCo
   );
 }
 
-function DPad({ disabled, onMove, onInteract }: { disabled?: boolean; onMove: (dx: number, dy: number) => void; onInteract: () => void }) {
-  const holdTimer = useRef<number | null>(null);
-  const stopHold = useCallback(() => {
-    if (holdTimer.current === null) return;
-    window.clearInterval(holdTimer.current);
-    holdTimer.current = null;
-  }, []);
-  const startHold = useCallback((dx: number, dy: number) => {
-    if (disabled) return;
-    stopHold();
-    onMove(dx, dy);
-    holdTimer.current = window.setInterval(() => onMove(dx, dy), MOVEMENT_TICK_MS);
-  }, [disabled, onMove, stopHold]);
-  const keyboardMove = (event: React.MouseEvent<HTMLButtonElement>, dx: number, dy: number) => {
-    if (event.detail === 0) onMove(dx, dy);
-  };
-  useEffect(() => stopHold, [stopHold]);
+function moveToward(current: number, target: number, maxDelta: number) {
+  if (Math.abs(target - current) <= maxDelta) return target;
+  return current + Math.sign(target - current) * maxDelta;
+}
 
+function useSmoothActor(options: {
+  enabled: boolean;
+  startPosition: Position;
+  initialFacing: RoadFacing;
+  worldSize: Size;
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  maxSpeed: number;
+  isWalkable: (position: Position) => boolean;
+  onPosition: (position: Position, distancePixels: number) => void;
+  onCommit: (position: Position) => void;
+  onInteract: (position: Position) => void;
+  onBump: () => void;
+}) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLSpanElement | null>(null);
+  const configRef = useRef(options);
+  const keysRef = useRef<Set<string>>(new Set());
+  const touchDirectionRef = useRef<Position>({ x: 0, y: 0 });
+  const touchStartedAtRef = useRef(0);
+  const touchReleaseTimerRef = useRef<number | null>(null);
+  const runtimeRef = useRef({
+    position: { ...options.startPosition },
+    velocity: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, initialized: false },
+    facing: options.initialFacing,
+    moving: false,
+    travel: 0,
+    lastCommit: 0,
+    lastBump: 0,
+  });
+
+  useEffect(() => {
+    configRef.current = options;
+    if (!options.enabled) {
+      keysRef.current.clear();
+      touchDirectionRef.current = { x: 0, y: 0 };
+      runtimeRef.current.velocity = { x: 0, y: 0 };
+      runtimeRef.current.moving = false;
+    }
+  }, [options]);
+
+  const startTouchDirection = useCallback((dx: number, dy: number) => {
+    if (!configRef.current.enabled) return;
+    if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
+    touchStartedAtRef.current = performance.now();
+    touchDirectionRef.current = { x: dx, y: dy };
+  }, []);
+
+  const stopTouchDirection = useCallback(() => {
+    const remaining = Math.max(0, 48 - (performance.now() - touchStartedAtRef.current));
+    if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
+    touchReleaseTimerRef.current = window.setTimeout(() => {
+      touchDirectionRef.current = { x: 0, y: 0 };
+      touchReleaseTimerRef.current = null;
+    }, remaining);
+  }, []);
+
+  const interact = useCallback(() => {
+    const config = configRef.current;
+    if (config.enabled) config.onInteract({ ...runtimeRef.current.position });
+  }, []);
+
+  useEffect(() => {
+    const movementKeys = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
+    const keys = keysRef.current;
+    const keyStartedAt = new Map<string, number>();
+    const releaseTimers = new Map<string, number>();
+    let animationFrame = 0;
+    let lastFrame = performance.now();
+
+    const stopInput = () => {
+      keys.clear();
+      touchDirectionRef.current = { x: 0, y: 0 };
+    };
+
+    const keydown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const config = configRef.current;
+      if (movementKeys.has(key)) {
+        event.preventDefault();
+        if (config.enabled && !keys.has(key)) {
+          const releaseTimer = releaseTimers.get(key);
+          if (releaseTimer !== undefined) window.clearTimeout(releaseTimer);
+          keyStartedAt.set(key, performance.now());
+          keys.add(key);
+        }
+        return;
+      }
+      if (key === "e") {
+        event.preventDefault();
+        if (!event.repeat && config.enabled) config.onInteract({ ...runtimeRef.current.position });
+      }
+    };
+
+    const keyup = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (!movementKeys.has(key)) return;
+      event.preventDefault();
+      const remaining = Math.max(0, 48 - (performance.now() - (keyStartedAt.get(key) ?? 0)));
+      const release = window.setTimeout(() => {
+        keys.delete(key);
+        keyStartedAt.delete(key);
+        releaseTimers.delete(key);
+      }, remaining);
+      releaseTimers.set(key, release);
+    };
+
+    const renderFrame = (now: number) => {
+      const config = configRef.current;
+      const runtime = runtimeRef.current;
+      const dt = Math.min(0.034, Math.max(0, (now - lastFrame) / 1000));
+      lastFrame = now;
+      const keyboardX = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+      const keyboardY = (keys.has("arrowdown") || keys.has("s") ? 1 : 0) - (keys.has("arrowup") || keys.has("w") ? 1 : 0);
+      const rawX = config.enabled ? keyboardX + touchDirectionRef.current.x : 0;
+      const rawY = config.enabled ? keyboardY + touchDirectionRef.current.y : 0;
+      const inputMagnitude = Math.hypot(rawX, rawY);
+      const inputX = inputMagnitude > 0 ? rawX / inputMagnitude : 0;
+      const inputY = inputMagnitude > 0 ? rawY / inputMagnitude : 0;
+      const acceleration = inputMagnitude > 0 ? 1750 : 2300;
+      runtime.velocity.x = moveToward(runtime.velocity.x, inputX * config.maxSpeed, acceleration * dt);
+      runtime.velocity.y = moveToward(runtime.velocity.y, inputY * config.maxSpeed, acceleration * dt);
+      if (Math.abs(runtime.velocity.x) < 0.5) runtime.velocity.x = 0;
+      if (Math.abs(runtime.velocity.y) < 0.5) runtime.velocity.y = 0;
+
+      const worldWidth = Math.max(1, config.worldSize.width);
+      const worldHeight = Math.max(1, config.worldSize.height);
+      const before = runtime.position;
+      let next = { ...before };
+      let blocked = false;
+      const deltaX = runtime.velocity.x * dt;
+      const deltaY = runtime.velocity.y * dt;
+      const requestedPixels = Math.hypot(deltaX, deltaY);
+      if (Math.abs(deltaX) > 0.001) {
+        const candidate = { x: next.x + (deltaX / worldWidth) * 100, y: next.y };
+        if (config.isWalkable(candidate)) next = candidate;
+        else {
+          runtime.velocity.x = 0;
+          blocked = true;
+        }
+      }
+      if (Math.abs(deltaY) > 0.001) {
+        const candidate = { x: next.x, y: next.y + (deltaY / worldHeight) * 100 };
+        if (config.isWalkable(candidate)) next = candidate;
+        else {
+          runtime.velocity.y = 0;
+          blocked = true;
+        }
+      }
+
+      const movedPixels = Math.hypot(((next.x - before.x) / 100) * worldWidth, ((next.y - before.y) / 100) * worldHeight);
+      if (movedPixels > 0.001) {
+        runtime.position = next;
+        runtime.travel += movedPixels;
+        config.onPosition({ ...next }, movedPixels);
+      }
+      if (blocked && inputMagnitude > 0 && movedPixels < Math.max(0.4, requestedPixels * 0.35) && now - runtime.lastBump > 300) {
+        runtime.lastBump = now;
+        config.onBump();
+      }
+      if (movedPixels > 0 && now - runtime.lastCommit > 200) {
+        runtime.lastCommit = now;
+        config.onCommit({ ...runtime.position });
+      }
+
+      const moving = movedPixels > 0.08 && Math.hypot(runtime.velocity.x, runtime.velocity.y) > 10;
+      const facingX = inputMagnitude > 0 ? inputX : runtime.velocity.x;
+      const facingY = inputMagnitude > 0 ? inputY : runtime.velocity.y;
+      if (Math.abs(facingX) > 0.05 || Math.abs(facingY) > 0.05) {
+        runtime.facing = Math.abs(facingX) >= Math.abs(facingY) ? (facingX < 0 ? "left" : "right") : (facingY < 0 ? "up" : "down");
+      }
+      runtime.moving = moving;
+
+      const player = playerRef.current;
+      const frame = frameRef.current;
+      const stage = stageRef.current;
+      const viewport = config.viewportRef.current;
+      if (player && frame && stage && viewport) {
+        const actorX = (runtime.position.x / 100) * worldWidth;
+        const actorY = (runtime.position.y / 100) * worldHeight;
+        player.style.transform = `translate3d(${actorX}px, ${actorY}px, 0) translate(-50%, -68%)`;
+        player.classList.toggle("is-walking", moving);
+        for (const direction of ["up", "down", "left", "right"] as RoadFacing[]) player.classList.toggle(`facing-${direction}`, runtime.facing === direction);
+        const row = { down: 0, left: 1, right: 2, up: 3 }[runtime.facing];
+        const walkCycle = [0, 1, 2, 1];
+        const column = moving ? walkCycle[Math.floor(runtime.travel / 16) % walkCycle.length] : 1;
+        const backgroundX = column === 0 ? 0 : column === 1 ? 50 : 100;
+        const backgroundY = row === 0 ? 0 : row === 1 ? 100 / 3 : row === 2 ? 200 / 3 : 100;
+        frame.style.backgroundPosition = `${backgroundX}% ${backgroundY}%`;
+
+        const targetCameraX = Math.min(0, Math.max(viewport.clientWidth - worldWidth, viewport.clientWidth / 2 - actorX));
+        const targetCameraY = Math.min(0, Math.max(viewport.clientHeight - worldHeight, viewport.clientHeight / 2 - actorY));
+        if (!runtime.camera.initialized) {
+          runtime.camera = { x: targetCameraX, y: targetCameraY, initialized: true };
+        } else {
+          const cameraBlend = 1 - Math.exp(-12 * dt);
+          runtime.camera.x += (targetCameraX - runtime.camera.x) * cameraBlend;
+          runtime.camera.y += (targetCameraY - runtime.camera.y) * cameraBlend;
+        }
+        stage.style.transform = `translate3d(${runtime.camera.x}px, ${runtime.camera.y}px, 0)`;
+      }
+      animationFrame = window.requestAnimationFrame(renderFrame);
+    };
+
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    window.addEventListener("blur", stopInput);
+    animationFrame = window.requestAnimationFrame(renderFrame);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      stopInput();
+      for (const timer of releaseTimers.values()) window.clearTimeout(timer);
+      if (touchReleaseTimerRef.current !== null) window.clearTimeout(touchReleaseTimerRef.current);
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", keyup);
+      window.removeEventListener("blur", stopInput);
+    };
+  }, []);
+
+  return { stageRef, playerRef, frameRef, startTouchDirection, stopTouchDirection, interact };
+}
+
+function DPad({ disabled, onDirectionStart, onDirectionEnd, onInteract }: { disabled?: boolean; onDirectionStart: (dx: number, dy: number) => void; onDirectionEnd: () => void; onInteract: () => void }) {
+  const keyboardPulse = (event: React.MouseEvent<HTMLButtonElement>, dx: number, dy: number) => {
+    if (event.detail !== 0 || disabled) return;
+    onDirectionStart(dx, dy);
+    window.setTimeout(onDirectionEnd, 110);
+  };
   return (
     <div className="touch-controls">
       <div className="dpad" aria-label="移动控制">
-        <button type="button" disabled={disabled} onPointerDown={() => startHold(0, -1)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 0, -1)} aria-label="向上">▲</button>
-        <button type="button" disabled={disabled} onPointerDown={() => startHold(-1, 0)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, -1, 0)} aria-label="向左">◀</button>
+        <button type="button" disabled={disabled} onPointerDown={() => onDirectionStart(0, -1)} onPointerUp={onDirectionEnd} onPointerCancel={onDirectionEnd} onPointerLeave={onDirectionEnd} onClick={(event) => keyboardPulse(event, 0, -1)} aria-label="向上">▲</button>
+        <button type="button" disabled={disabled} onPointerDown={() => onDirectionStart(-1, 0)} onPointerUp={onDirectionEnd} onPointerCancel={onDirectionEnd} onPointerLeave={onDirectionEnd} onClick={(event) => keyboardPulse(event, -1, 0)} aria-label="向左">◀</button>
         <i />
-        <button type="button" disabled={disabled} onPointerDown={() => startHold(1, 0)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 1, 0)} aria-label="向右">▶</button>
-        <button type="button" disabled={disabled} onPointerDown={() => startHold(0, 1)} onPointerUp={stopHold} onPointerCancel={stopHold} onPointerLeave={stopHold} onClick={(event) => keyboardMove(event, 0, 1)} aria-label="向下">▼</button>
+        <button type="button" disabled={disabled} onPointerDown={() => onDirectionStart(1, 0)} onPointerUp={onDirectionEnd} onPointerCancel={onDirectionEnd} onPointerLeave={onDirectionEnd} onClick={(event) => keyboardPulse(event, 1, 0)} aria-label="向右">▶</button>
+        <button type="button" disabled={disabled} onPointerDown={() => onDirectionStart(0, 1)} onPointerUp={onDirectionEnd} onPointerCancel={onDirectionEnd} onPointerLeave={onDirectionEnd} onClick={(event) => keyboardPulse(event, 0, 1)} aria-label="向下">▼</button>
       </div>
       <button type="button" className="interact-button" disabled={disabled} onClick={onInteract}><span>E</span>互动</button>
     </div>
@@ -910,30 +1124,43 @@ function HomeScene({
   mapCamera,
   fieldViewportRef,
   playerName,
-  position,
-  facing,
-  moving,
-  step,
+  startPosition,
   bumped,
   discoveries,
   toast,
-  onMove,
+  disabled,
+  onPosition,
+  onCommit,
   onInteract,
+  onBump,
 }: {
   mapCamera: { width: number; height: number; x: number; y: number };
   fieldViewportRef: React.RefObject<HTMLDivElement | null>;
   playerName: string;
-  position: Position;
-  facing: RoadFacing;
-  moving: boolean;
-  step: number;
+  startPosition: Position;
   bumped: boolean;
   discoveries: HomeDiscovery[];
   toast: string;
-  onMove: (dx: number, dy: number) => void;
-  onInteract: () => void;
+  disabled: boolean;
+  onPosition: (position: Position, distancePixels: number) => void;
+  onCommit: (position: Position) => void;
+  onInteract: (position: Position) => void;
+  onBump: () => void;
 }) {
   const readyToLeave = discoveries.length === Object.keys(HOME_INTERACTIONS).length;
+  const { stageRef: homeStageRef, playerRef: homePlayerRef, frameRef: homeFrameRef, startTouchDirection: startHomeTouch, stopTouchDirection: stopHomeTouch, interact: interactAtHome } = useSmoothActor({
+    enabled: !disabled,
+    startPosition,
+    initialFacing: "down",
+    worldSize: { width: mapCamera.width, height: mapCamera.height },
+    viewportRef: fieldViewportRef,
+    maxSpeed: 205,
+    isWalkable: isHomeWalkable,
+    onPosition,
+    onCommit,
+    onInteract,
+    onBump,
+  });
   return (
     <section className="home-screen">
       <div className="mission-card home-mission-card">
@@ -946,24 +1173,24 @@ function HomeScene({
         </div>
       </div>
       <div className="home-world" ref={fieldViewportRef} aria-label={`${playerName}的家，可探索室内地图`}>
-        <div className="home-map-stage" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
+        <div ref={homeStageRef} className="home-map-stage" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px` }}>
           <img src={SCENE_ART.home} alt={`${playerName}的家`} draggable={false} />
           {(Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>).map(([id, item]) => (
-            <button type="button" key={id} className={`home-hotspot${discoveries.includes(id) ? " discovered" : ""}`} style={{ left: `${item.marker.x}%`, top: `${item.marker.y}%` }} onClick={onInteract} aria-label={item.label}>
+            <button type="button" key={id} className={`home-hotspot${discoveries.includes(id) ? " discovered" : ""}`} style={{ left: `${item.marker.x}%`, top: `${item.marker.y}%` }} onClick={interactAtHome} aria-label={item.label}>
               <i>{discoveries.includes(id) ? "✓" : "!"}</i><span>{item.label}</span>
             </button>
           ))}
-          <button type="button" className={`home-hotspot home-door-hotspot${readyToLeave ? " ready" : ""}`} style={{ left: "50%", top: "84%" }} onClick={onInteract} aria-label="前往照护所">
+          <button type="button" className={`home-hotspot home-door-hotspot${readyToLeave ? " ready" : ""}`} style={{ left: "50%", top: "84%" }} onClick={interactAtHome} aria-label="前往照护所">
             <i>{readyToLeave ? "→" : "×"}</i><span>{readyToLeave ? "前往照护所" : "离家前再看看"}</span>
           </button>
-          <div className={`map-player home-player facing-${facing}${moving ? " is-walking" : ""}${bumped ? " is-bumping" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }}>
+          <div ref={homePlayerRef} className={`map-player home-player facing-down${bumped ? " is-bumping" : ""}`} style={{ transform: `translate3d(${(startPosition.x / 100) * mapCamera.width}px, ${(startPosition.y / 100) * mapCamera.height}px, 0) translate(-50%, -68%)` }}>
             <i className="map-player-shadow" aria-hidden="true" />
-            <MapPlayerSprite facing={facing} moving={moving} step={step} />
+            <MapPlayerSprite facing="down" moving={false} step={0} frameRef={homeFrameRef} />
           </div>
         </div>
       </div>
       <div className="field-toast home-toast"><span>家</span><p>{toast}</p><kbd>E</kbd></div>
-      <DPad onMove={onMove} onInteract={onInteract} />
+      <DPad disabled={disabled} onDirectionStart={startHomeTouch} onDirectionEnd={stopHomeTouch} onInteract={interactAtHome} />
       <span className="map-control-hint">WASD / 方向键移动 · E 调查</span>
     </section>
   );
@@ -974,10 +1201,8 @@ function ExplorationScene({
   mapCamera,
   fieldViewportRef,
   partner,
-  roadPos,
-  roadFacing,
-  roadMoving,
-  roadStep,
+  startPosition,
+  initialFacing,
   roadBumped,
   roadInGrass,
   toast,
@@ -987,18 +1212,19 @@ function ExplorationScene({
   missionItems,
   markers,
   mapReady,
+  movementDisabled,
   onMapReady,
-  onMove,
+  onPosition,
+  onCommit,
+  onBump,
   onInteract,
 }: {
   map: ExplorationMapDefinition;
   mapCamera: { width: number; height: number; x: number; y: number };
   fieldViewportRef: React.RefObject<HTMLDivElement | null>;
   partner: Partner;
-  roadPos: Position;
-  roadFacing: RoadFacing;
-  roadMoving: boolean;
-  roadStep: number;
+  startPosition: Position;
+  initialFacing: RoadFacing;
   roadBumped: boolean;
   roadInGrass: boolean;
   toast: string;
@@ -1008,15 +1234,31 @@ function ExplorationScene({
   missionItems: Array<{ label: string; done?: boolean }>;
   markers?: React.ReactNode;
   mapReady: boolean;
+  movementDisabled: boolean;
   onMapReady: (mapId: ExplorationPhase) => void;
-  onMove: (dx: number, dy: number) => void;
-  onInteract: () => void;
+  onPosition: (position: Position, distancePixels: number) => void;
+  onCommit: (position: Position) => void;
+  onBump: () => void;
+  onInteract: (position: Position) => void;
 }) {
   const [mapLoadError, setMapLoadError] = useState(false);
   const [mapLoadAttempt, setMapLoadAttempt] = useState(0);
   const mapSource = mapLoadAttempt === 0
     ? map.image
     : `${map.image}${map.image.includes("?") ? "&" : "?"}retry=${mapLoadAttempt}`;
+  const { stageRef, playerRef, frameRef, startTouchDirection, stopTouchDirection, interact } = useSmoothActor({
+    enabled: mapReady && !movementDisabled,
+    startPosition,
+    initialFacing,
+    worldSize: { width: mapCamera.width, height: mapCamera.height },
+    viewportRef: fieldViewportRef,
+    maxSpeed: 230,
+    isWalkable: (position) => isMapWalkable(map, position),
+    onPosition,
+    onCommit,
+    onInteract,
+    onBump,
+  });
 
   const handleMapLoaded = (image: HTMLImageElement) => {
     setMapLoadError(false);
@@ -1033,7 +1275,7 @@ function ExplorationScene({
         </div>
       </div>
       <div className="field-world" ref={fieldViewportRef} aria-label={`${map.name}可探索地图`}>
-        <div className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
+        <div ref={stageRef} className="rpg-map" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px` }}>
           <img
             className={`rpg-map-image${mapReady ? " is-ready" : ""}`}
             src={mapSource}
@@ -1043,9 +1285,9 @@ function ExplorationScene({
             onError={() => setMapLoadError(true)}
           />
           {markers}
-          <div className={`map-player facing-${roadFacing}${roadMoving ? " is-walking" : ""}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ left: `${roadPos.x}%`, top: `${roadPos.y}%` }}>
+          <div ref={playerRef} className={`map-player facing-${initialFacing}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ transform: `translate3d(${(startPosition.x / 100) * mapCamera.width}px, ${(startPosition.y / 100) * mapCamera.height}px, 0) translate(-50%, -68%)` }}>
             <i className="map-player-shadow" aria-hidden="true" />
-            <MapPlayerSprite facing={roadFacing} moving={roadMoving} step={roadStep} />
+            <MapPlayerSprite facing={initialFacing} moving={false} step={0} frameRef={frameRef} />
             <div className="map-companion" aria-hidden="true"><PetSprite id={partner.id} size="sm" /></div>
             {roadInGrass && <i className="grass-foreground" aria-hidden="true" />}
           </div>
@@ -1063,7 +1305,7 @@ function ExplorationScene({
       )}
       {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
       <div className="field-toast"><span>{roadInGrass ? "草" : map.id === "rupture" ? "契" : map.id === "aftermath" ? "忆" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
-      <DPad disabled={!mapReady} onMove={onMove} onInteract={onInteract} />
+      <DPad disabled={!mapReady || movementDisabled} onDirectionStart={startTouchDirection} onDirectionEnd={stopTouchDirection} onInteract={interact} />
       <span className="map-control-hint">WASD / 方向键移动 · E 互动</span>
     </section>
   );
@@ -1084,9 +1326,6 @@ export default function Home() {
   const [activePetId, setActivePetId] = useState<PetSpeciesId | null>(null);
   const [petProgress, setPetProgress] = useState<PetProgress[]>([]);
   const [homePos, setHomePos] = useState<Position>(HOME_START);
-  const [homeFacing, setHomeFacing] = useState<RoadFacing>("down");
-  const [homeMoving, setHomeMoving] = useState(false);
-  const [homeStep, setHomeStep] = useState(0);
   const [homeBumped, setHomeBumped] = useState(false);
   const [homeDiscoveries, setHomeDiscoveries] = useState<HomeDiscovery[]>([]);
   const [homeStory, setHomeStory] = useState<HomeStoryId | null>(null);
@@ -1099,8 +1338,6 @@ export default function Home() {
 
   const [roadPos, setRoadPos] = useState<Position>(ROAD_START);
   const [roadFacing, setRoadFacing] = useState<RoadFacing>("right");
-  const [roadMoving, setRoadMoving] = useState(false);
-  const [roadStep, setRoadStep] = useState(0);
   const [roadBumped, setRoadBumped] = useState(false);
   const [roadInGrass, setRoadInGrass] = useState(false);
   const [loadedMapId, setLoadedMapId] = useState<ExplorationPhase | null>(null);
@@ -1110,20 +1347,14 @@ export default function Home() {
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
   const preloadedAssetsRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const grassStepsRef = useRef(0);
-  const grassMotionTicksRef = useRef(0);
-  const roadStopTimer = useRef<number | null>(null);
+  const grassTravelDistanceRef = useRef(0);
   const roadBumpTimer = useRef<number | null>(null);
-  const homeStopTimer = useRef<number | null>(null);
   const homeBumpTimer = useRef<number | null>(null);
-  const lastRoadBumpAtRef = useRef(0);
-  const lastHomeBumpAtRef = useRef(0);
-  const heldMovementKeysRef = useRef<Set<string>>(new Set());
-  const movementTimerRef = useRef<number | null>(null);
-  const movementHandlersRef = useRef<{
-    move: (dx: number, dy: number) => void;
-    interact: () => void;
-    stop: () => void;
-  } | null>(null);
+  const homePositionLiveRef = useRef<Position>(HOME_START);
+  const roadPositionLiveRef = useRef<Position>(ROAD_START);
+  const roadInGrassRef = useRef(false);
+  const homeHintZoneRef = useRef("");
+  const encounterPendingRef = useRef(false);
   const [berry, setBerry] = useState(true);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
@@ -1177,29 +1408,15 @@ export default function Home() {
     const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
     const width = MAP_PIXEL_SIZE.width * scale;
     const height = MAP_PIXEL_SIZE.height * scale;
-    const playerX = (roadPos.x / 100) * width;
-    const playerY = (roadPos.y / 100) * height;
-    return {
-      width,
-      height,
-      x: Math.min(0, Math.max(fieldSize.width - width, fieldSize.width / 2 - playerX)),
-      y: Math.min(0, Math.max(fieldSize.height - height, fieldSize.height / 2 - playerY)),
-    };
-  }, [fieldSize, roadPos]);
+    return { width, height, x: 0, y: 0 };
+  }, [fieldSize]);
 
   const homeCamera = useMemo(() => {
     const scale = Math.max(fieldSize.width / HOME_PIXEL_SIZE.width, fieldSize.height / HOME_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.7 : 0.82);
     const width = HOME_PIXEL_SIZE.width * scale;
     const height = HOME_PIXEL_SIZE.height * scale;
-    const playerX = (homePos.x / 100) * width;
-    const playerY = (homePos.y / 100) * height;
-    return {
-      width,
-      height,
-      x: Math.min(0, Math.max(fieldSize.width - width, fieldSize.width / 2 - playerX)),
-      y: Math.min(0, Math.max(fieldSize.height - height, fieldSize.height / 2 - playerY)),
-    };
-  }, [fieldSize, homePos]);
+    return { width, height, x: 0, y: 0 };
+  }, [fieldSize]);
 
   useEffect(() => {
     let hasSavedGame = false;
@@ -1245,11 +1462,8 @@ export default function Home() {
   }, [phase]);
 
   useEffect(() => () => {
-    if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
     if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
-    if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
     if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
-    if (movementTimerRef.current !== null) window.clearInterval(movementTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1308,10 +1522,12 @@ export default function Home() {
     if (next === "road") return;
     const map = EXPLORATION_MAPS[next as ExplorationPhase];
     setRoadPos(map.start);
+    roadPositionLiveRef.current = map.start;
     setRoadFacing("up");
-    setRoadMoving(false);
     setRoadBumped(false);
     setRoadInGrass(false);
+    roadInGrassRef.current = false;
+    grassTravelDistanceRef.current = 0;
     setToast(map.missionText);
   }, []);
 
@@ -1349,9 +1565,8 @@ export default function Home() {
     setActivePetId(null);
     setPetProgress([]);
     setHomePos(HOME_START);
-    setHomeFacing("down");
-    setHomeMoving(false);
-    setHomeStep(0);
+    homePositionLiveRef.current = HOME_START;
+    homeHintZoneRef.current = "";
     setHomeBumped(false);
     setHomeDiscoveries([]);
     setHomeStory(null);
@@ -1360,21 +1575,17 @@ export default function Home() {
     setBattleFx(null);
     setBattleBusy(false);
     setRoadPos(ROAD_START);
+    roadPositionLiveRef.current = ROAD_START;
     setRoadFacing("right");
-    setRoadMoving(false);
-    setRoadStep(0);
     setRoadBumped(false);
     setRoadInGrass(false);
+    roadInGrassRef.current = false;
     setLoadedMapId(null);
     setEncounterPending(false);
+    encounterPendingRef.current = false;
     setRouteEncounterId("wild");
     grassStepsRef.current = 0;
-    grassMotionTicksRef.current = 0;
-    heldMovementKeysRef.current.clear();
-    if (movementTimerRef.current !== null) {
-      window.clearInterval(movementTimerRef.current);
-      movementTimerRef.current = null;
-    }
+    grassTravelDistanceRef.current = 0;
     setBerry(true);
     setWildHp(32);
     setWildCalm(0);
@@ -1433,7 +1644,8 @@ export default function Home() {
       setPetProgress(restoredProgress);
       const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
       setHomePos(HOME_START);
-      setHomeFacing("down");
+      homePositionLiveRef.current = HOME_START;
+      homeHintZoneRef.current = "";
       setHomeDiscoveries(restoredHomeDiscoveries);
       setHomeStory(null);
       setHomeToast(restoredHomeDiscoveries.length === 3 ? "东西都收好了。到正门按 E 前往照护所。" : "离家前，再看看房间里发光的地方。");
@@ -1495,42 +1707,30 @@ export default function Home() {
     playTone(740);
   }, [playTone]);
 
-  const moveHome = useCallback((dx: number, dy: number) => {
-    if (phase !== "home" || homeStory !== null || collectionView !== null || helpOpen) return;
-    const magnitude = Math.hypot(dx, dy) || 1;
-    const unitX = dx / magnitude;
-    const unitY = dy / magnitude;
-    const nextFacing: RoadFacing = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
-    setHomeFacing(nextFacing);
-    const next = {
-      x: homePos.x + unitX * HOME_STEP.x,
-      y: homePos.y + unitY * HOME_STEP.y,
-    };
-    if (!isHomeWalkable(next)) {
-      setHomeMoving(false);
-      const now = Date.now();
-      if (now - lastHomeBumpAtRef.current < 280) return;
-      lastHomeBumpAtRef.current = now;
-      setHomeBumped(true);
-      setHomeToast("家具挡住了这边，从中央木地板绕过去吧。");
-      playTone(115);
-      if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
-      homeBumpTimer.current = window.setTimeout(() => setHomeBumped(false), 190);
-      return;
-    }
-    setHomeMoving(true);
-    setHomeStep((value) => value + 1);
-    setHomePos(next);
-    if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
-    homeStopTimer.current = window.setTimeout(() => setHomeMoving(false), MOVEMENT_TICK_MS + 55);
-    const nearby = (Object.values(HOME_INTERACTIONS) as Array<(typeof HOME_INTERACTIONS)[HomeDiscovery]>).find((item) => distance(next, item.position) < 8);
-    if (nearby) setHomeToast(`${nearby.hint} 靠近后按 E 调查。`);
-    else if (distance(next, { x: 50, y: 84 }) < 9) setHomeToast(homeDiscoveries.length === 3 ? "东西已经收好，按 E 出发。" : "似乎还有东西没有确认。看看发光的地方。可按 E 调查。" );
-  }, [collectionView, helpOpen, homeDiscoveries.length, homePos, homeStory, phase, playTone]);
+  const handleHomePosition = useCallback((position: Position) => {
+    homePositionLiveRef.current = position;
+    const nearby = (Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>)
+      .find(([, item]) => distance(position, item.position) < 8);
+    const zone = nearby?.[0] ?? (distance(position, { x: 50, y: 84 }) < 9 ? "door" : "floor");
+    if (zone === homeHintZoneRef.current) return;
+    homeHintZoneRef.current = zone;
+    if (nearby) setHomeToast(`${nearby[1].hint} 靠近后按 E 调查。`);
+    else if (zone === "door") setHomeToast(homeDiscoveries.length === 3 ? "东西已经收好，按 E 出发。" : "似乎还有东西没有确认。看看发光的地方。可按 E 调查。");
+  }, [homeDiscoveries.length]);
 
-  const interactHome = useCallback(() => {
+  const bumpHome = useCallback(() => {
+    setHomeBumped(true);
+    setHomeToast("家具挡住了这边，沿着边缘移动可以自然绕开。");
+    playTone(115);
+    if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
+    homeBumpTimer.current = window.setTimeout(() => setHomeBumped(false), 180);
+  }, [playTone]);
+
+  const interactHome = useCallback((position: Position) => {
     if (phase !== "home" || homeStory !== null || collectionView !== null || helpOpen) return;
-    if (distance(homePos, { x: 50, y: 84 }) < 9) {
+    homePositionLiveRef.current = position;
+    setHomePos(position);
+    if (distance(position, { x: 50, y: 84 }) < 9) {
       if (homeDiscoveries.length < 3) {
         setHomeToast(`还有 ${3 - homeDiscoveries.length} 处重要的东西没有确认。`);
         playTone(145);
@@ -1541,14 +1741,14 @@ export default function Home() {
       return;
     }
     const nearby = (Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>)
-      .find(([, item]) => distance(homePos, item.position) < 9);
+      .find(([, item]) => distance(position, item.position) < 9);
     if (nearby) {
       setHomeStory(nearby[0]);
       playTone(homeDiscoveries.includes(nearby[0]) ? 520 : 640);
       return;
     }
     setHomeToast("这里没有需要带走的东西。靠近发光标记后按 E 调查。");
-  }, [collectionView, helpOpen, homeDiscoveries, homePos, homeStory, phase, playTone]);
+  }, [collectionView, helpOpen, homeDiscoveries, homeStory, phase, playTone]);
 
   const completeHomeStory = useCallback(() => {
     if (!homeStory) return;
@@ -1570,24 +1770,11 @@ export default function Home() {
     setHomeToast(next.length === 3 ? "重要的东西都确认过了。到正门按 E 前往照护所。" : `记住了这段线索。还剩 ${3 - next.length} 处。`);
   }, [go, homeDiscoveries, homeStory]);
 
-  const triggerRoadMotion = useCallback((dx: number, dy: number, duration: number) => {
-    if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
-    else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
-    setRoadMoving(true);
-    setRoadStep((step) => step + 1);
-    if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
-    roadStopTimer.current = window.setTimeout(() => setRoadMoving(false), duration + 70);
-  }, []);
-
   const beginRouteEncounter = useCallback((id: RouteEncounterId) => {
+    if (encounterPendingRef.current) return;
+    encounterPendingRef.current = true;
     const encounter = ROUTE_ENCOUNTERS[id];
-    heldMovementKeysRef.current.clear();
-    grassMotionTicksRef.current = 0;
-    if (movementTimerRef.current !== null) {
-      window.clearInterval(movementTimerRef.current);
-      movementTimerRef.current = null;
-    }
-    setRoadMoving(false);
+    grassTravelDistanceRef.current = 0;
     registerPetSightings([id]);
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
@@ -1600,65 +1787,51 @@ export default function Home() {
     playTone(210);
   }, [playTone, registerPetSightings]);
 
-  const moveRoad = useCallback((dx: number, dy: number) => {
-    if (encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || !activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
-    const magnitude = Math.hypot(dx, dy) || 1;
-    const unitX = dx / magnitude;
-    const unitY = dy / magnitude;
-    if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
-    else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
-
-    const next = {
-      x: roadPos.x + unitX * ROAD_STEP.x,
-      y: roadPos.y + unitY * ROAD_STEP.y,
-    };
-    if (!isMapWalkable(activeMap, next)) {
-      setRoadMoving(false);
-      const now = Date.now();
-      if (now - lastRoadBumpAtRef.current < 280) return;
-      lastRoadBumpAtRef.current = now;
-      setRoadBumped(true);
-      setToast(activeMap.collisionText);
-      playTone(115);
-      if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
-      roadBumpTimer.current = window.setTimeout(() => setRoadBumped(false), 190);
-      return;
+  const handleRoadPosition = useCallback((position: Position, distancePixels: number) => {
+    roadPositionLiveRef.current = position;
+    if (!activeMap || encounterPendingRef.current) return;
+    const inGrass = isGrassTile(activeMap, position);
+    if (inGrass !== roadInGrassRef.current) {
+      roadInGrassRef.current = inGrass;
+      setRoadInGrass(inGrass);
+      if (inGrass) setToast(captured ? "高草沙沙作响。图鉴里已经有这片区域的记录。" : "高草在脚边晃动……");
+      else if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
+      else setToast(activeMap.missionText);
     }
-
-    triggerRoadMotion(dx, dy, MOVEMENT_TICK_MS);
-    setRoadPos(next);
-    const inGrass = isGrassTile(activeMap, next);
-    setRoadInGrass(inGrass);
     if (!inGrass) {
       grassStepsRef.current = 0;
-      grassMotionTicksRef.current = 0;
-      if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
-      else setToast(activeMap.missionText);
+      grassTravelDistanceRef.current = 0;
       return;
     }
-    if (captured) {
-      setToast("高草沙沙作响。图鉴里已经有这片区域的记录。");
-      return;
-    }
-
-    grassMotionTicksRef.current += 1;
-    if (grassMotionTicksRef.current % 4 !== 0) {
-      setToast(grassStepsRef.current < 3 ? "高草在脚边晃动……" : "附近传来了野生宠物的叫声！");
-      return;
-    }
+    if (captured) return;
+    grassTravelDistanceRef.current += distancePixels;
+    if (grassTravelDistanceRef.current < 72) return;
+    grassTravelDistanceRef.current -= 72;
     grassStepsRef.current += 1;
     const steps = grassStepsRef.current;
     const chance = steps < 3 ? 0 : Math.min(0.18 + (steps - 3) * 0.12, 0.72);
     setToast(steps < 3 ? "高草在脚边晃动……" : "附近传来了野生宠物的叫声！");
     if (steps >= 9 || Math.random() < chance) {
       grassStepsRef.current = 0;
+      setRoadPos(position);
       beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
     }
-  }, [activeMap, aftermathDialogueOpen, beginRouteEncounter, captured, cityDialogueOpen, collectionView, encounterPending, festivalDialogueOpen, helpOpen, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
+  }, [activeMap, beginRouteEncounter, captured, phase]);
 
-  const exploreInteraction = useCallback(() => {
+  const bumpRoad = useCallback(() => {
+    if (!activeMap) return;
+    setRoadBumped(true);
+    setToast(activeMap.collisionText);
+    playTone(115);
+    if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
+    roadBumpTimer.current = window.setTimeout(() => setRoadBumped(false), 180);
+  }, [activeMap, playTone]);
+
+  const exploreInteraction = useCallback((position: Position) => {
     if (!activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
-    if (phase === "road" && distance(roadPos, activeMap.interaction) < 8) {
+    roadPositionLiveRef.current = position;
+    setRoadPos(position);
+    if (phase === "road" && distance(position, activeMap.interaction) < 8) {
       if (!captured) {
         setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
         playTone(150);
@@ -1668,18 +1841,18 @@ export default function Home() {
       go("city");
       return;
     }
-    if (phase === "city" && distance(roadPos, activeMap.interaction) < 8) {
+    if (phase === "city" && distance(position, activeMap.interaction) < 8) {
       setCityDialogueOpen(true);
       playTone(650);
       return;
     }
-    if (phase === "festival" && distance(roadPos, activeMap.interaction) < 10) {
+    if (phase === "festival" && distance(position, activeMap.interaction) < 10) {
       setFestivalDialogueOpen(true);
       playTone(720);
       return;
     }
     if (phase === "rupture") {
-      const node = RUPTURE_NODE_POSITIONS.findIndex((position, index) => !ruptureNodes.includes(index) && distance(roadPos, position) < 8);
+      const node = RUPTURE_NODE_POSITIONS.findIndex((nodePosition, index) => !ruptureNodes.includes(index) && distance(position, nodePosition) < 8);
       if (node >= 0) {
         const next = [...ruptureNodes, node];
         setRuptureNodes(next);
@@ -1687,12 +1860,12 @@ export default function Home() {
         setToast(next.length === 3 ? "三处灵契已稳定。沿中央石路前往上方裂隙台。" : `第 ${next.length} 处灵契已稳定，继续寻找其余晶柱。`);
         return;
       }
-      if (ruptureNodes.length === 3 && distance(roadPos, activeMap.interaction) < 9) {
+      if (ruptureNodes.length === 3 && distance(position, activeMap.interaction) < 9) {
         go("boss");
         return;
       }
     }
-    if (phase === "aftermath" && distance(roadPos, activeMap.interaction) < 9) {
+    if (phase === "aftermath" && distance(position, activeMap.interaction) < 9) {
       setAftermathDialogueOpen(true);
       playTone(620);
       return;
@@ -1703,85 +1876,18 @@ export default function Home() {
     if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
-  }, [activeMap, captured, collectionView, go, helpOpen, mapAssetReady, phase, playTone, roadPos, ruptureNodes]);
+  }, [activeMap, captured, collectionView, go, helpOpen, mapAssetReady, phase, playTone, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
     const timer = window.setTimeout(() => {
       setEncounterPending(false);
+      encounterPendingRef.current = false;
       go("capture");
     }, 760);
     return () => window.clearTimeout(timer);
   }, [encounterPending, go]);
 
-  useEffect(() => {
-    movementHandlersRef.current = phase === "home"
-      ? { move: moveHome, interact: interactHome, stop: () => setHomeMoving(false) }
-      : { move: moveRoad, interact: exploreInteraction, stop: () => setRoadMoving(false) };
-  }, [exploreInteraction, interactHome, moveHome, moveRoad, phase]);
-
-  useEffect(() => {
-    if (!activeMap && phase !== "home") return;
-    const movementKeys = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
-    const heldKeys = heldMovementKeysRef.current;
-    const tick = () => {
-      const handlers = movementHandlersRef.current;
-      if (!handlers) return;
-      const dx = (heldKeys.has("arrowright") || heldKeys.has("d") ? 1 : 0) - (heldKeys.has("arrowleft") || heldKeys.has("a") ? 1 : 0);
-      const dy = (heldKeys.has("arrowdown") || heldKeys.has("s") ? 1 : 0) - (heldKeys.has("arrowup") || heldKeys.has("w") ? 1 : 0);
-      if (dx === 0 && dy === 0) {
-        handlers.stop();
-        return;
-      }
-      handlers.move(dx, dy);
-    };
-    const stopTimer = () => {
-      if (movementTimerRef.current !== null) {
-        window.clearInterval(movementTimerRef.current);
-        movementTimerRef.current = null;
-      }
-      movementHandlersRef.current?.stop();
-    };
-    const keydown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (movementKeys.has(key)) {
-        event.preventDefault();
-        if (!heldKeys.has(key)) {
-          heldKeys.add(key);
-          tick();
-        }
-        if (movementTimerRef.current === null) movementTimerRef.current = window.setInterval(tick, MOVEMENT_TICK_MS);
-        return;
-      }
-      if (key === "e") {
-        event.preventDefault();
-        if (!event.repeat) movementHandlersRef.current?.interact();
-      }
-    };
-    const keyup = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (!movementKeys.has(key)) return;
-      event.preventDefault();
-      heldKeys.delete(key);
-      if (heldKeys.size === 0) stopTimer();
-      else tick();
-    };
-    const blur = () => {
-      heldKeys.clear();
-      stopTimer();
-    };
-    heldKeys.clear();
-    window.addEventListener("keydown", keydown);
-    window.addEventListener("keyup", keyup);
-    window.addEventListener("blur", blur);
-    return () => {
-      heldKeys.clear();
-      stopTimer();
-      window.removeEventListener("keydown", keydown);
-      window.removeEventListener("keyup", keyup);
-      window.removeEventListener("blur", blur);
-    };
-  }, [activeMap, phase]);
 
   const captureAction = async (action: "attack" | "calm" | "ball") => {
     if (captureWon || battleBusy || !partner) return;
@@ -1995,7 +2101,7 @@ export default function Home() {
               <span>训练师姓名</span>
               <input value={draftName} maxLength={8} onChange={(event) => setDraftName(event.target.value)} autoFocus aria-label="训练师姓名" />
             </label>
-            <button type="button" className="primary-action dark" disabled={!draftName.trim()} onClick={() => { setPlayerName(draftName.trim()); setHomeStory("wake"); setHomePos(HOME_START); setHomeDiscoveries([]); go("home"); }}><span>收好推荐信</span><b>›</b></button>
+            <button type="button" className="primary-action dark" disabled={!draftName.trim()} onClick={() => { setPlayerName(draftName.trim()); setHomeStory("wake"); setHomePos(HOME_START); homePositionLiveRef.current = HOME_START; setHomeDiscoveries([]); go("home"); }}><span>收好推荐信</span><b>›</b></button>
             <div className="seal-stamp">临虹<br />照护所</div>
           </div>
         </section>
@@ -2006,15 +2112,15 @@ export default function Home() {
           mapCamera={homeCamera}
           fieldViewportRef={fieldViewportRef}
           playerName={playerName}
-          position={homePos}
-          facing={homeFacing}
-          moving={homeMoving}
-          step={homeStep}
+          startPosition={homePos}
           bumped={homeBumped}
           discoveries={homeDiscoveries}
           toast={homeToast}
-          onMove={moveHome}
+          disabled={homeStory !== null || collectionView !== null || helpOpen}
+          onPosition={handleHomePosition}
+          onCommit={setHomePos}
           onInteract={interactHome}
+          onBump={bumpHome}
         />
       )}
 
@@ -2061,10 +2167,8 @@ export default function Home() {
           mapCamera={mapCamera}
           fieldViewportRef={fieldViewportRef}
           partner={partner}
-          roadPos={roadPos}
-          roadFacing={roadFacing}
-          roadMoving={roadMoving}
-          roadStep={roadStep}
+          startPosition={roadPos}
+          initialFacing={roadFacing}
           roadBumped={roadBumped}
           roadInGrass={roadInGrass}
           toast={toast}
@@ -2090,28 +2194,31 @@ export default function Home() {
             { label: "抵达上方记忆祭台" },
           ]}
           mapReady={mapAssetReady}
+          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || helpOpen}
           onMapReady={setLoadedMapId}
           markers={<>
-            {phase === "road" && <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>}
-            {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
+            {phase === "road" && <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>}
+            {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
             {phase === "festival" && <>
               {FESTIVAL_HEROES.map((hero, index) => {
                 const positions = [{ x: 39, y: 45 }, { x: 45, y: 38 }, { x: 55, y: 38 }, { x: 61, y: 45 }, { x: 50, y: 31 }];
                 return <div key={hero.name} className="map-character-marker" style={{ left: `${positions[index].x}%`, top: `${positions[index].y}%` }}><Character name={hero.name} variant={hero.variant} small /><span>{hero.name}</span></div>;
               })}
-              <button type="button" className="map-landmark ceremony-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>万灵共鸣环</span><i>按 E</i></button>
+              <button type="button" className="map-landmark ceremony-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>万灵共鸣环</span><i>按 E</i></button>
             </>}
             {phase === "rupture" && <>
-              {RUPTURE_NODE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${ruptureNodes.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={exploreInteraction} aria-label={`灵契节点${index + 1}`}><i>{ruptureNodes.includes(index) ? "✓" : "!"}</i><span>{ruptureNodes.includes(index) ? "已稳定" : `节点 ${index + 1}`}</span></button>)}
-              {ruptureNodes.length === 3 && <button type="button" className="map-landmark rift-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>裂隙中央</span><i>按 E</i></button>}
+              {RUPTURE_NODE_POSITIONS.map((position, index) => <button type="button" key={index} className={`spirit-map-node${ruptureNodes.includes(index) ? " restored" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)} aria-label={`灵契节点${index + 1}`}><i>{ruptureNodes.includes(index) ? "✓" : "!"}</i><span>{ruptureNodes.includes(index) ? "已稳定" : `节点 ${index + 1}`}</span></button>)}
+              {ruptureNodes.length === 3 && <button type="button" className="map-landmark rift-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>裂隙中央</span><i>按 E</i></button>}
             </>}
             {phase === "aftermath" && <>
               <div className="map-character-marker temple-sergi" style={{ left: "46%", top: "18%" }}><Character name="塞其" variant="sergi" small /><span>塞其</span></div>
               <div className="map-character-marker temple-angela" style={{ left: "54%", top: "18%" }}><Character name="安琪儿" variant="angela" small /><span>安琪儿</span></div>
-              <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={exploreInteraction}><span>记忆祭台</span><i>按 E</i></button>
+              <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>记忆祭台</span><i>按 E</i></button>
             </>}
           </>}
-          onMove={moveRoad}
+          onPosition={handleRoadPosition}
+          onCommit={setRoadPos}
+          onBump={bumpRoad}
           onInteract={exploreInteraction}
         />
       )}
@@ -2133,7 +2240,7 @@ export default function Home() {
               <button type="button" disabled={battleBusy} onClick={() => captureAction("attack")}><span>攻击</span><b>{partner.attack}</b><small>降低体力</small></button>
               <button type="button" disabled={battleBusy} onClick={() => captureAction("calm")}><span>安抚</span><b>放下莓果</b><small>降低戒备</small></button>
               <button type="button" disabled={battleBusy} className="ball-command" onClick={() => captureAction("ball")}><span>道具 · {balls}</span><b>召唤胶囊</b><small>邀请同行</small></button>
-            </div> : <button type="button" className="primary-action battle-continue" onClick={() => { setToast("捕捉完成。沿道路前往东北方的彩虹城门。"); setRoadInGrass(false); go("road"); }}><span>带新伙伴返回地图</span><b>›</b></button>}
+            </div> : <button type="button" className="primary-action battle-continue" onClick={() => { setToast("捕捉完成。沿道路前往东北方的彩虹城门。"); setRoadInGrass(false); roadInGrassRef.current = false; go("road"); }}><span>带新伙伴返回地图</span><b>›</b></button>}
           </div>
         </section>
       )}
@@ -2232,7 +2339,7 @@ export default function Home() {
           <section className="help-modal" onClick={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setHelpOpen(false)} aria-label="关闭">×</button>
             <small>TRAINER HANDBOOK</small><h2>旅行手册</h2>
-            <div className="help-grid"><div><kbd>WASD</kbd><b>格子移动</b><p>也支持方向键；水面和峭壁不能通行。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、发光物体或人物。</p></div><div><kbd>高草</kbd><b>野外遭遇</b><p>在金色高草里移动会遇到野生宠物。</p></div><div><kbd>自动</kbd><b>保存进度</b><p>每次进入新场景都会保存在本机。</p></div></div>
+            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、发光物体或人物。</p></div><div><kbd>高草</kbd><b>野外遭遇</b><p>在金色高草里移动会遇到野生宠物。</p></div><div><kbd>自动</kbd><b>保存进度</b><p>每次进入新场景都会保存在本机。</p></div></div>
             <p className="help-note">这是《宠物王国：灵契》的可玩序章原型，玩法与剧情会在后续章节中继续扩展。</p>
           </section>
         </div>
