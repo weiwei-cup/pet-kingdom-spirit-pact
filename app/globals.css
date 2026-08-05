@@ -1041,6 +1041,28 @@ img {
   cursor: default;
 }
 
+.field-world::before,
+.field-world::after {
+  content: "";
+  position: absolute;
+  z-index: 21;
+  inset: 0;
+  pointer-events: none;
+}
+
+.field-world::before {
+  z-index: 0;
+  background: #183b35;
+}
+
+.field-world::after {
+  border: 4px solid rgba(7, 28, 30, .52);
+  background:
+    linear-gradient(90deg, rgba(3, 18, 19, .26), transparent 9%, transparent 91%, rgba(3, 18, 19, .26)),
+    linear-gradient(rgba(3, 18, 19, .3), transparent 11%, transparent 88%, rgba(3, 18, 19, .35));
+  box-shadow: inset 0 0 0 2px rgba(238, 205, 116, .11), inset 0 0 46px rgba(3, 15, 18, .2);
+}
+
 .rpg-map {
   position: absolute;
   top: 0;
@@ -1069,6 +1091,85 @@ img {
 .rpg-map-image.is-ready {
   opacity: 1;
 }
+
+.map-atmosphere {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.atmosphere-back { z-index: 2; }
+.atmosphere-front { z-index: 11; }
+
+.ambient-cloud-shadow {
+  position: absolute;
+  top: var(--y);
+  left: var(--x);
+  width: 240px;
+  height: 84px;
+  border-radius: 48% 52% 44% 56%;
+  background:
+    radial-gradient(ellipse at 34% 55%, rgba(18, 54, 42, .16) 0 38%, transparent 40%),
+    radial-gradient(ellipse at 68% 42%, rgba(18, 54, 42, .13) 0 35%, transparent 37%);
+  transform: translate(-50%, -50%);
+  animation: ambientCloudDrift 16s steps(24, end) var(--delay) infinite;
+}
+
+.ambient-mote {
+  position: absolute;
+  top: var(--y);
+  left: var(--x);
+  width: 4px;
+  height: 4px;
+  border: 1px solid rgba(255, 248, 181, .72);
+  background: #fff5a7;
+  box-shadow: 5px -3px 0 rgba(211, 243, 154, .52);
+  animation: ambientMote 3.8s steps(8, end) var(--delay) infinite;
+}
+
+.atmosphere-front .ambient-mote {
+  width: 5px;
+  height: 3px;
+  border: 0;
+  background: #d8ef96;
+  box-shadow: none;
+  transform: rotate(-22deg);
+  opacity: .7;
+}
+
+.ambient-gust {
+  position: absolute;
+  top: var(--y);
+  left: -12%;
+  width: var(--length);
+  height: 3px;
+  border-top: 2px solid rgba(241, 255, 225, .34);
+  border-radius: 50%;
+  filter: drop-shadow(18px 5px 0 rgba(214, 242, 210, .18));
+  animation: ambientGust 5.4s steps(32, end) var(--delay) infinite;
+}
+
+.ambient-terrain-accent {
+  position: absolute;
+  width: 28px;
+  height: 9px;
+  border-top: 3px solid rgba(247, 255, 202, .72);
+  border-radius: 50%;
+  filter: drop-shadow(9px 2px 0 rgba(255, 243, 151, .35));
+  transform: translate(-50%, -50%);
+  animation: terrainGlint 2.1s steps(4, end) infinite;
+}
+
+.atmosphere-festival .ambient-mote { background: #ffd164; box-shadow: 5px -3px 0 #ef7a7c; }
+.atmosphere-rupture .ambient-mote { background: #e8749b; box-shadow: 5px -3px 0 #8d70db; }
+.atmosphere-rupture .ambient-gust { border-color: rgba(232, 112, 162, .46); }
+.atmosphere-aftermath .ambient-mote { background: #d9d2ff; box-shadow: 5px -3px 0 rgba(156, 221, 255, .7); }
+.atmosphere-highland .ambient-mote,
+.atmosphere-windPass .ambient-mote { background: #e6d59d; }
+.atmosphere-pasture .ambient-mote { background: #f7e791; box-shadow: 5px -3px 0 rgba(213, 240, 170, .75); }
+.atmosphere-observatory .ambient-mote { background: #e7edff; box-shadow: 5px -3px 0 #a38eea; }
+.atmosphere-observatory .ambient-terrain-accent { border-color: rgba(204, 194, 255, .8); filter: drop-shadow(9px 2px 0 rgba(141, 113, 224, .45)); }
 
 .field-screen.map-loading .map-player,
 .field-screen.map-loading .map-landmark,
@@ -1224,6 +1325,60 @@ img {
 .map-player.facing-down .map-companion { bottom: 0; left: 43px; }
 .map-player.is-walking .map-companion { animation: mapCompanionTrot 288ms steps(2, end) infinite; }
 
+.map-companion-actor {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  left: 0;
+  width: 58px;
+  height: 58px;
+  transition: none;
+  will-change: transform;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+.map-companion-actor .pet-sprite {
+  position: absolute;
+  right: 50%;
+  bottom: 2px;
+  transform: translateX(50%) scale(.55);
+  transform-origin: center bottom;
+  filter: saturate(.94) drop-shadow(1px 2px 0 rgba(14, 39, 34, .36));
+}
+
+.map-companion-actor.is-following .pet-sprite {
+  animation: companionTrailTrot 420ms steps(2, end) infinite;
+}
+
+.map-step-effect {
+  position: absolute;
+  z-index: 2;
+  bottom: 9px;
+  left: 50%;
+  width: 6px;
+  height: 4px;
+  background: rgba(225, 203, 137, .78);
+  box-shadow: 8px 2px 0 rgba(225, 203, 137, .52), -7px 3px 0 rgba(225, 203, 137, .42);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.map-player.is-walking:not(.in-grass) .map-step-effect {
+  animation: mapStepDust 420ms steps(5, end) infinite;
+}
+
+.map-player.in-grass .map-step-effect {
+  width: 5px;
+  height: 9px;
+  background: #c9b52f;
+  box-shadow: 9px -2px 0 #91a127, -8px 1px 0 #d7c83c;
+}
+
+.map-player.is-walking.in-grass .map-step-effect {
+  animation: mapStepGrass 380ms steps(4, end) infinite;
+}
+
 .grass-foreground {
   position: absolute;
   z-index: 5;
@@ -1237,6 +1392,43 @@ img {
     linear-gradient(112deg, transparent 0 42%, #9d9d24 44% 53%, transparent 55%) 7px 1px / 17px 22px;
   filter: drop-shadow(0 2px 0 #5e7021);
   animation: grassRustle 360ms steps(2, end) infinite;
+}
+
+.area-title-card {
+  position: absolute;
+  z-index: 25;
+  top: 29px;
+  left: 50%;
+  display: grid;
+  min-width: 230px;
+  padding: 10px 26px 12px;
+  color: #fff0bd;
+  background:
+    linear-gradient(90deg, transparent, rgba(8, 31, 35, .92) 15%, rgba(8, 31, 35, .92) 85%, transparent);
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: areaTitleReveal 2.8s steps(18, end) both;
+}
+
+.area-title-card small {
+  color: #8bd3bc;
+  font: 6px ui-monospace, monospace;
+  letter-spacing: .2em;
+}
+
+.area-title-card strong {
+  margin-top: 4px;
+  font: 900 18px "STKaiti", "KaiTi", serif;
+  letter-spacing: .13em;
+  text-shadow: 2px 2px 0 #183538;
+}
+
+.area-title-card i {
+  width: 100%;
+  height: 2px;
+  margin-top: 6px;
+  background: linear-gradient(90deg, transparent, #d9b75e, transparent);
 }
 
 .field-skyline,
@@ -3861,6 +4053,58 @@ img {
   50% { transform: translateX(-50%) scaleX(.72); opacity: .34; }
 }
 
+@keyframes companionTrailTrot {
+  0%, 100% { transform: translateX(50%) scale(.55) translateY(0); }
+  50% { transform: translateX(50%) scale(.55) translateY(-3px); }
+}
+
+@keyframes companionTrailTrotMobile {
+  0%, 100% { transform: translateX(50%) scale(.47) translateY(0); }
+  50% { transform: translateX(50%) scale(.47) translateY(-3px); }
+}
+
+@keyframes mapStepDust {
+  0% { opacity: 0; transform: translate(-50%, 1px) scale(.5); }
+  28% { opacity: .8; }
+  100% { opacity: 0; transform: translate(-70%, -5px) scale(1.25); }
+}
+
+@keyframes mapStepGrass {
+  0% { opacity: 0; transform: translate(-50%, 1px) rotate(-8deg) scale(.5); }
+  30% { opacity: .88; }
+  100% { opacity: 0; transform: translate(-30%, -11px) rotate(18deg) scale(1.08); }
+}
+
+@keyframes ambientCloudDrift {
+  from { transform: translate(-50%, -50%); }
+  to { transform: translate(calc(-50% + 90px), calc(-50% + 16px)); }
+}
+
+@keyframes ambientMote {
+  0% { transform: translate(0, 5px) rotate(0); opacity: 0; }
+  22% { opacity: .82; }
+  70% { opacity: .62; }
+  100% { transform: translate(var(--drift), -18px) rotate(90deg); opacity: 0; }
+}
+
+@keyframes ambientGust {
+  0% { transform: translateX(0) scaleX(.45); opacity: 0; }
+  20% { opacity: .58; }
+  78% { opacity: .34; }
+  100% { transform: translateX(125vw) scaleX(1); opacity: 0; }
+}
+
+@keyframes terrainGlint {
+  0%, 100% { transform: translate(-50%, -50%) scaleX(.45); opacity: .16; }
+  50% { transform: translate(-50%, -50%) scaleX(1); opacity: .8; }
+}
+
+@keyframes areaTitleReveal {
+  0% { opacity: 0; transform: translate(-50%, -8px) scaleX(.3); }
+  12%, 70% { opacity: 1; transform: translate(-50%, 0) scaleX(1); }
+  100% { opacity: 0; transform: translate(-50%, -4px) scaleX(.88); visibility: hidden; }
+}
+
 @keyframes mapCompanionTrot {
   0%, 100% { margin-bottom: 0; }
   50% { margin-bottom: 4px; }
@@ -4203,9 +4447,14 @@ img {
   .home-hotspot > span { font-size: 6px; }
   .map-player { width: 56px; height: 56px; }
   .map-companion { left: -23px; transform: scale(0.48); }
+  .map-companion-actor { width: 50px; height: 50px; }
+  .map-companion-actor .pet-sprite { transform: translateX(50%) scale(.47); }
+  .map-companion-actor.is-following .pet-sprite { animation-name: companionTrailTrotMobile; }
   .map-player.facing-left .map-companion { left: 33px; }
   .map-player.facing-down .map-companion { left: 35px; }
   .grass-foreground { right: 4px; left: 4px; height: 18px; }
+  .area-title-card { top: 10px; min-width: 190px; padding: 8px 18px 9px; }
+  .area-title-card strong { font-size: 14px; }
   .city-gate-marker { padding: 5px 7px; font-size: 6px; }
   .map-landmark { padding: 5px 6px; font-size: 6px; }
   .map-character-marker { transform: translate(-50%, -70%) scale(.78); }

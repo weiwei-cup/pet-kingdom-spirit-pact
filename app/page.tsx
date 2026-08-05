@@ -23,7 +23,7 @@ import {
   type FieldResearch,
   type SupplyOfferId,
 } from "./adventure-rules";
-import { canStandAt, integrateActorMovement, isEncounterTerrain } from "./overworld-engine";
+import { canStandAt, integrateActorMovement, isEncounterTerrain, terrainAt } from "./overworld-engine";
 import { BATTLE_STATUS_LABELS, applyStatusTick, enemyAction, shouldInflictStatus, statusForElement, type BattleStatus } from "./trainer-battle-rules";
 import {
   HIGHLAND_SIDE_QUESTS,
@@ -188,6 +188,14 @@ type ExplorationMapDefinition = {
   missionTitle: string;
   missionText: string;
   collisionText: string;
+};
+
+type MapAtmosphereDefinition = {
+  chapter: string;
+  weather: string;
+  motes: number;
+  gusts: number;
+  accents: Array<{ x: number; y: number }>;
 };
 
 const SAVE_KEY = "pet-kingdom-spirit-pact-prologue-v1";
@@ -938,6 +946,18 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
   },
 };
 
+const MAP_ATMOSPHERES: Record<ExplorationPhase, MapAtmosphereDefinition> = {
+  road: { chapter: "青崖水道", weather: "溪风 · 水汽", motes: 11, gusts: 3, accents: [{ x: 24, y: 62 }, { x: 39, y: 72 }, { x: 55, y: 86 }] },
+  city: { chapter: "彩虹城", weather: "晴光 · 泉雾", motes: 8, gusts: 2, accents: [{ x: 43, y: 51 }, { x: 51, y: 45 }, { x: 59, y: 54 }] },
+  festival: { chapter: "黄金庆典", weather: "灯火 · 花雨", motes: 16, gusts: 2, accents: [{ x: 35, y: 58 }, { x: 50, y: 48 }, { x: 66, y: 61 }] },
+  rupture: { chapter: "断契浮台", weather: "灵潮 · 灰烬", motes: 18, gusts: 4, accents: [{ x: 28, y: 58 }, { x: 50, y: 33 }, { x: 72, y: 56 }] },
+  aftermath: { chapter: "月白回廊", weather: "静夜 · 记忆尘", motes: 14, gusts: 1, accents: [{ x: 32, y: 55 }, { x: 50, y: 40 }, { x: 68, y: 55 }] },
+  highland: { chapter: "断风遗迹", weather: "高空风 · 云影", motes: 10, gusts: 5, accents: [{ x: 28, y: 68 }, { x: 53, y: 47 }, { x: 74, y: 29 }] },
+  windPass: { chapter: "风蚀栈道", weather: "强风 · 砂叶", motes: 13, gusts: 7, accents: [{ x: 31, y: 76 }, { x: 51, y: 50 }, { x: 72, y: 30 }] },
+  pasture: { chapter: "云铃牧场", weather: "草香 · 铃风", motes: 15, gusts: 4, accents: [{ x: 31, y: 63 }, { x: 54, y: 48 }, { x: 72, y: 75 }] },
+  observatory: { chapter: "冻星观测站", weather: "霜粒 · 星辉", motes: 17, gusts: 3, accents: [{ x: 26, y: 52 }, { x: 50, y: 36 }, { x: 74, y: 54 }] },
+};
+
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
   name: [SCENE_ART.home],
   home: [SCENE_ART.shelter],
@@ -1058,6 +1078,39 @@ function MapPlayerSprite({ facing, moving, step, frameRef }: { facing: RoadFacin
       style={{ backgroundImage: `url(${MAP_PLAYER_ART})`, backgroundPosition: `${x}% ${y}%` }}
       aria-hidden="true"
     />
+  );
+}
+
+function MapAtmosphere({ mapId, layer }: { mapId: ExplorationPhase; layer: "back" | "front" }) {
+  const mood = MAP_ATMOSPHERES[mapId];
+  const seed = mapId.split("").reduce((total, character) => total + character.charCodeAt(0), 0);
+  return (
+    <div className={`map-atmosphere atmosphere-${mapId} atmosphere-${layer}`} aria-hidden="true">
+      {layer === "back" && Array.from({ length: 3 }, (_, index) => (
+        <i
+          key={`shadow-${index}`}
+          className="ambient-cloud-shadow"
+          style={{ "--x": `${(seed + index * 31) % 76 + 4}%`, "--y": `${(seed * 2 + index * 27) % 72 + 8}%`, "--delay": `${-index * 4.2}s` } as React.CSSProperties}
+        />
+      ))}
+      {Array.from({ length: layer === "back" ? mood.motes : Math.ceil(mood.motes / 2) }, (_, index) => (
+        <i
+          key={`mote-${index}`}
+          className="ambient-mote"
+          style={{ "--x": `${(seed * 3 + index * 37) % 92 + 4}%`, "--y": `${(seed + index * 29) % 88 + 6}%`, "--delay": `${-(index % 7) * 0.73}s`, "--drift": `${18 + (index % 5) * 7}px` } as React.CSSProperties}
+        />
+      ))}
+      {layer === "front" && Array.from({ length: mood.gusts }, (_, index) => (
+        <i
+          key={`gust-${index}`}
+          className="ambient-gust"
+          style={{ "--y": `${12 + ((seed + index * 23) % 76)}%`, "--delay": `${-index * 1.35}s`, "--length": `${70 + (index % 3) * 46}px` } as React.CSSProperties}
+        />
+      ))}
+      {layer === "front" && mood.accents.map((position, index) => (
+        <i key={`accent-${index}`} className="ambient-terrain-accent" style={{ left: `${position.x}%`, top: `${position.y}%`, animationDelay: `${-index * 0.7}s` }} />
+      ))}
+    </div>
   );
 }
 
@@ -1496,6 +1549,35 @@ function moveToward(current: number, target: number, maxDelta: number) {
   return current + Math.sign(target - current) * maxDelta;
 }
 
+type ActorTrailPoint = { position: Position; travel: number };
+
+function initialCompanionTrail(position: Position, facing: RoadFacing): ActorTrailPoint[] {
+  const behind = facing === "left"
+    ? { x: position.x + 2.1, y: position.y }
+    : facing === "right"
+      ? { x: position.x - 2.1, y: position.y }
+      : facing === "up"
+        ? { x: position.x, y: position.y + 3.1 }
+        : { x: position.x, y: position.y - 3.1 };
+  return [{ position: behind, travel: -38 }, { position: { ...position }, travel: 0 }];
+}
+
+function trailPositionAt(points: ActorTrailPoint[], travel: number) {
+  let before = points[0];
+  let after = points[points.length - 1];
+  for (let index = 1; index < points.length; index += 1) {
+    after = points[index];
+    if (after.travel >= travel) break;
+    before = after;
+  }
+  if (after.travel <= before.travel) return { ...before.position };
+  const progress = Math.max(0, Math.min(1, (travel - before.travel) / (after.travel - before.travel)));
+  return {
+    x: before.position.x + (after.position.x - before.position.x) * progress,
+    y: before.position.y + (after.position.y - before.position.y) * progress,
+  };
+}
+
 function useSmoothActor(options: {
   worldKey: string;
   enabled: boolean;
@@ -1504,6 +1586,7 @@ function useSmoothActor(options: {
   worldSize: Size;
   viewportRef: React.RefObject<HTMLDivElement | null>;
   maxSpeed: number;
+  speedMultiplier?: (position: Position) => number;
   isWalkable: (position: Position) => boolean;
   onPosition: (position: Position, distancePixels: number) => void;
   onCommit: (position: Position) => void;
@@ -1512,6 +1595,7 @@ function useSmoothActor(options: {
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<HTMLDivElement | null>(null);
+  const companionRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLSpanElement | null>(null);
   const configRef = useRef(options);
   const keysRef = useRef<Set<string>>(new Set());
@@ -1525,6 +1609,7 @@ function useSmoothActor(options: {
     facing: options.initialFacing,
     moving: false,
     travel: 0,
+    trail: initialCompanionTrail(options.startPosition, options.initialFacing),
     lastCommit: 0,
     lastBump: 0,
   });
@@ -1541,6 +1626,7 @@ function useSmoothActor(options: {
         facing: options.initialFacing,
         moving: false,
         travel: 0,
+        trail: initialCompanionTrail(options.startPosition, options.initialFacing),
         lastCommit: 0,
         lastBump: 0,
       };
@@ -1625,9 +1711,12 @@ function useSmoothActor(options: {
 
       while (accumulator >= fixedStep && simulationSteps < 5) {
         runtime.previousPosition = { ...runtime.position };
-        const acceleration = inputMagnitude > 0 ? 3200 : 4400;
-        runtime.velocity.x = moveToward(runtime.velocity.x, inputX * config.maxSpeed, acceleration * fixedStep);
-        runtime.velocity.y = moveToward(runtime.velocity.y, inputY * config.maxSpeed, acceleration * fixedStep);
+        const surfaceSpeed = Math.max(0.7, Math.min(1.08, config.speedMultiplier?.(runtime.position) ?? 1));
+        const targetSpeed = config.maxSpeed * surfaceSpeed;
+        const accelerationX = inputMagnitude === 0 ? 9200 : runtime.velocity.x * inputX < -1 ? 11200 : 6200;
+        const accelerationY = inputMagnitude === 0 ? 9200 : runtime.velocity.y * inputY < -1 ? 11200 : 6200;
+        runtime.velocity.x = moveToward(runtime.velocity.x, inputX * targetSpeed, accelerationX * fixedStep);
+        runtime.velocity.y = moveToward(runtime.velocity.y, inputY * targetSpeed, accelerationY * fixedStep);
         if (Math.abs(runtime.velocity.x) < 0.5) runtime.velocity.x = 0;
         if (Math.abs(runtime.velocity.y) < 0.5) runtime.velocity.y = 0;
 
@@ -1644,6 +1733,11 @@ function useSmoothActor(options: {
         });
         runtime.position = movement.position;
         runtime.travel += movement.movedPixels;
+        const lastTrailPoint = runtime.trail[runtime.trail.length - 1];
+        if (movement.movedPixels > 0.001 && runtime.travel - lastTrailPoint.travel >= 2.4) {
+          runtime.trail.push({ position: { ...runtime.position }, travel: runtime.travel });
+        }
+        while (runtime.trail.length > 3 && runtime.trail[1].travel < runtime.travel - 96) runtime.trail.shift();
         movedPixels += movement.movedPixels;
         if (movement.blockedX) runtime.velocity.x = 0;
         if (movement.blockedY) runtime.velocity.y = 0;
@@ -1674,6 +1768,7 @@ function useSmoothActor(options: {
 
       const player = playerRef.current;
       const frame = frameRef.current;
+      const companion = companionRef.current;
       const stage = stageRef.current;
       const viewport = config.viewportRef.current;
       if (player && frame && stage && viewport) {
@@ -1689,17 +1784,25 @@ function useSmoothActor(options: {
         for (const direction of ["up", "down", "left", "right"] as RoadFacing[]) player.classList.toggle(`facing-${direction}`, runtime.facing === direction);
         const row = { down: 0, left: 1, right: 2, up: 3 }[runtime.facing];
         const walkCycle = [0, 1, 2, 1];
-        const column = moving ? walkCycle[Math.floor(runtime.travel / 16) % walkCycle.length] : 1;
+        const column = moving ? walkCycle[Math.floor(runtime.travel / 21) % walkCycle.length] : 1;
         const backgroundX = column === 0 ? 0 : column === 1 ? 50 : 100;
         const backgroundY = row === 0 ? 0 : row === 1 ? 100 / 3 : row === 2 ? 200 / 3 : 100;
         frame.style.backgroundPosition = `${backgroundX}% ${backgroundY}%`;
 
-        const targetCameraX = Math.min(0, Math.max(viewport.clientWidth - worldWidth, viewport.clientWidth / 2 - actorX));
-        const targetCameraY = Math.min(0, Math.max(viewport.clientHeight - worldHeight, viewport.clientHeight / 2 - actorY));
+        if (companion) {
+          const followPosition = trailPositionAt(runtime.trail, runtime.travel - 38);
+          companion.style.transform = `translate3d(${(followPosition.x / 100) * worldWidth}px, ${(followPosition.y / 100) * worldHeight}px, 0) translate(-50%, -58%)`;
+          companion.classList.toggle("is-following", moving);
+        }
+
+        const lookAheadX = Math.max(-54, Math.min(54, runtime.velocity.x * 0.17));
+        const lookAheadY = Math.max(-36, Math.min(36, runtime.velocity.y * 0.12));
+        const targetCameraX = Math.min(0, Math.max(viewport.clientWidth - worldWidth, viewport.clientWidth / 2 - actorX - lookAheadX));
+        const targetCameraY = Math.min(0, Math.max(viewport.clientHeight - worldHeight, viewport.clientHeight / 2 - actorY - lookAheadY));
         if (!runtime.camera.initialized) {
           runtime.camera = { x: targetCameraX, y: targetCameraY, initialized: true };
         } else {
-          const cameraBlend = 1 - Math.exp(-16 * elapsed);
+          const cameraBlend = 1 - Math.exp(-10.5 * elapsed);
           runtime.camera.x += (targetCameraX - runtime.camera.x) * cameraBlend;
           runtime.camera.y += (targetCameraY - runtime.camera.y) * cameraBlend;
         }
@@ -1721,7 +1824,7 @@ function useSmoothActor(options: {
     };
   }, []);
 
-  return { stageRef, playerRef, frameRef, startTouchDirection, stopTouchDirection, interact };
+  return { stageRef, playerRef, companionRef, frameRef, startTouchDirection, stopTouchDirection, interact };
 }
 
 function DPad({ disabled, onDirectionStart, onDirectionEnd, onInteract }: { disabled?: boolean; onDirectionStart: (dx: number, dy: number) => void; onDirectionEnd: () => void; onInteract: () => void }) {
@@ -1871,14 +1974,15 @@ function ExplorationScene({
   const mapSource = mapLoadAttempt === 0
     ? map.image
     : `${map.image}${map.image.includes("?") ? "&" : "?"}retry=${mapLoadAttempt}`;
-  const { stageRef, playerRef, frameRef, startTouchDirection, stopTouchDirection, interact } = useSmoothActor({
+  const { stageRef, playerRef, companionRef, frameRef, startTouchDirection, stopTouchDirection, interact } = useSmoothActor({
     worldKey: map.id,
     enabled: mapReady && !movementDisabled,
     startPosition,
     initialFacing,
     worldSize: { width: mapCamera.width, height: mapCamera.height },
     viewportRef: fieldViewportRef,
-    maxSpeed: 230,
+    maxSpeed: 205,
+    speedMultiplier: (position) => terrainAt(map.id, position) === "grass" ? 0.82 : 1,
     isWalkable: (position) => canStandAt(map.id, position),
     onPosition,
     onCommit,
@@ -1910,15 +2014,21 @@ function ExplorationScene({
             onLoad={(event) => handleMapLoaded(event.currentTarget)}
             onError={() => setMapLoadError(true)}
           />
+          <MapAtmosphere mapId={map.id} layer="back" />
           {markers}
+          <div ref={companionRef} className="map-companion-actor" aria-hidden="true" style={{ transform: `translate3d(${(startPosition.x / 100) * mapCamera.width}px, ${(startPosition.y / 100) * mapCamera.height}px, 0) translate(-50%, -58%)` }}>
+            <PetSprite id={partner.id} size="sm" />
+          </div>
           <div ref={playerRef} className={`map-player facing-${initialFacing}${roadBumped ? " is-bumping" : ""}${roadInGrass ? " in-grass" : ""}`} style={{ transform: `translate3d(${(startPosition.x / 100) * mapCamera.width}px, ${(startPosition.y / 100) * mapCamera.height}px, 0) translate(-50%, -68%)` }}>
             <i className="map-player-shadow" aria-hidden="true" />
             <MapPlayerSprite facing={initialFacing} moving={false} step={0} frameRef={frameRef} />
-            <div className="map-companion" aria-hidden="true"><PetSprite id={partner.id} size="sm" /></div>
+            <i className="map-step-effect" aria-hidden="true" />
             {roadInGrass && <i className="grass-foreground" aria-hidden="true" />}
           </div>
+          <MapAtmosphere mapId={map.id} layer="front" />
         </div>
       </div>
+      {mapReady && <div className="area-title-card"><small>{MAP_ATMOSPHERES[map.id].weather}</small><strong>{MAP_ATMOSPHERES[map.id].chapter}</strong><i /></div>}
       {!mapReady && (
         <div className={`map-loading-overlay${mapLoadError ? " has-error" : ""}`} role="status" aria-live="polite">
           <i aria-hidden="true" />
@@ -2069,14 +2179,17 @@ export default function Home() {
   }, [activePetHp]);
 
   const mapCamera = useMemo(() => {
-    const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
+    const coverScale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height);
+    const explorationZoom = fieldSize.width < 700 ? 1.12 : fieldSize.width < 1100 ? 1.34 : 1.5;
+    const scale = coverScale * explorationZoom;
     const width = MAP_PIXEL_SIZE.width * scale;
     const height = MAP_PIXEL_SIZE.height * scale;
     return { width, height, x: 0, y: 0 };
   }, [fieldSize]);
 
   const homeCamera = useMemo(() => {
-    const scale = Math.max(fieldSize.width / HOME_PIXEL_SIZE.width, fieldSize.height / HOME_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.7 : 0.82);
+    const coverScale = Math.max(fieldSize.width / HOME_PIXEL_SIZE.width, fieldSize.height / HOME_PIXEL_SIZE.height);
+    const scale = coverScale * (fieldSize.width < 700 ? 1.08 : 1.22);
     const width = HOME_PIXEL_SIZE.width * scale;
     const height = HOME_PIXEL_SIZE.height * scale;
     return { width, height, x: 0, y: 0 };
