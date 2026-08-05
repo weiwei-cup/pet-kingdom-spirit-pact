@@ -148,6 +148,32 @@ const maps = [
       { ellipse: [90.2, 69, 5.4, 7] },
     ],
   },
+  {
+    id: "highland",
+    source: "public/pixel/map-east-highland.webp",
+    start: [17, 84],
+    goals: [[81, 20, 7]],
+    floor: ({ r, g, b }) => {
+      const goldenGround = r > 104 && g > 73 && b < 112 && r > b * 1.13 && g > b * 0.82;
+      const palePath = r > 118 && g > 95 && b < 130 && r > b * 1.08;
+      return goldenGround || palePath;
+    },
+    forceWalkable: [
+      // Southern and central suspended bridges, plus the final altar stairs.
+      { circle: [17, 84, 2.2] },
+      { circle: [81, 20, 2.2] },
+      [39.5, 75.2, 52.5, 84.5],
+      [44.3, 45.5, 56.7, 54.2],
+      [70, 27.5, 79, 37.5],
+    ],
+    forceBlocked: [
+      // The black bell itself is raised; its southern apron stays reachable.
+      { ellipse: [81, 12.5, 5.2, 6.5] },
+      [0, 94, 100, 100],
+      [0, 0, 3, 100],
+      [97, 0, 100, 100],
+    ],
+  },
 ];
 
 function insideShape(x, y, shape) {

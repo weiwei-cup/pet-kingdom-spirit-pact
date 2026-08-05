@@ -19,6 +19,7 @@ const routes = [
   { map: "festival", start: { x: 50, y: 91 }, goal: { x: 50, y: 51 }, radius: 10 },
   { map: "rupture", start: { x: 11, y: 88 }, goal: { x: 50, y: 13 }, radius: 9 },
   { map: "aftermath", start: { x: 50, y: 92 }, goal: { x: 50, y: 18 }, radius: 9 },
+  { map: "highland", start: { x: 17, y: 84 }, goal: { x: 81, y: 20 }, radius: 7 },
 ];
 
 function hasRoute({ map, start, goal, radius }) {
@@ -59,6 +60,9 @@ for (const position of [{ x: 39, y: 51 }, { x: 66, y: 32 }, { x: 64, y: 68 }]) {
 }
 assert.equal(terrainAt("road", { x: 16.7, y: 84.4 }), "ground");
 assert.equal(isEncounterTerrain("city", { x: 50, y: 91 }), false);
+for (const position of [{ x: 28, y: 38 }, { x: 67, y: 66 }]) {
+  assert.equal(isEncounterTerrain("highland", position), true, `highland scrub must trigger encounters at ${JSON.stringify(position)}`);
+}
 
 const wallSlide = integrateActorMovement({
   position: { x: 40, y: 40 },

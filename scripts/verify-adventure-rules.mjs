@@ -14,7 +14,7 @@ const rulesUrl = `data:text/javascript;base64,${Buffer.from(bundledRules).toStri
 const rules = await import(rulesUrl);
 
 assert.deepEqual(rules.normalizeInventory(null), rules.INITIAL_INVENTORY);
-assert.deepEqual(rules.normalizeInventory({ coins: -3, capsules: 2.8, berries: "bad" }), { coins: 0, capsules: 2, berries: 3 });
+assert.deepEqual(rules.normalizeInventory({ coins: -3, capsules: 2.8, berries: "bad" }), { coins: 0, capsules: 2, berries: 3, crystals: 0 });
 
 let research = rules.INITIAL_FIELD_RESEARCH;
 for (const species of ["wild", "bird", "moss", "wild"]) research = rules.recordEncounter(research, species);
@@ -25,11 +25,11 @@ assert.equal(rules.isFieldResearchComplete(research), true);
 
 const claimed = rules.claimFieldResearch(research, rules.INITIAL_INVENTORY);
 assert.equal(claimed.claimed, true);
-assert.deepEqual(claimed.inventory, { coins: 200, capsules: 8, berries: 5 });
+assert.deepEqual(claimed.inventory, { coins: 200, capsules: 8, berries: 5, crystals: 2 });
 assert.equal(rules.claimFieldResearch(claimed.research, claimed.inventory).claimed, false);
 
-assert.equal(rules.buySupply({ coins: 19, capsules: 0, berries: 0 }, "capsule").purchased, false);
-assert.deepEqual(rules.buySupply({ coins: 20, capsules: 0, berries: 0 }, "capsule").inventory, { coins: 0, capsules: 1, berries: 0 });
+assert.equal(rules.buySupply({ coins: 19, capsules: 0, berries: 0, crystals: 0 }, "capsule").purchased, false);
+assert.deepEqual(rules.buySupply({ coins: 20, capsules: 0, berries: 0, crystals: 0 }, "capsule").inventory, { coins: 0, capsules: 1, berries: 0, crystals: 0 });
 
 assert.ok(rules.elementMultiplier("fire", "plant") > 1);
 assert.ok(rules.elementMultiplier("plant", "fire") < 1);

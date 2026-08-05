@@ -15,6 +15,11 @@ const TERRAIN_ZONES: Partial<Record<OverworldMapId, TerrainRect[]>> = {
     { x1: 58, y1: 22, x2: 74, y2: 43, kind: "grass" },
     { x1: 56, y1: 60, x2: 72, y2: 75, kind: "grass" },
   ],
+  highland: [
+    { x1: 10, y1: 26, x2: 36, y2: 45, kind: "grass" },
+    { x1: 57, y1: 56, x2: 83, y2: 78, kind: "grass" },
+    { x1: 64, y1: 16, x2: 75, y2: 27, kind: "grass" },
+  ],
 };
 
 const decodedTerrain = new Map<OverworldMapId, Uint8Array>();

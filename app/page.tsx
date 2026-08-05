@@ -38,26 +38,29 @@ type Phase =
   | "rupture"
   | "boss"
   | "aftermath"
+  | "highland"
   | "ending";
 
 type PartnerId = "leaf" | "metal" | "tide";
 type NewPetId = "ember" | "moss" | "spark" | "frost" | "lantern" | "breeze";
 type PetArtId = PartnerId | "wild" | "bird" | "guardian" | NewPetId;
 type PetSpeciesId = PetArtId;
-type RouteEncounterId = "wild" | "bird" | "ember" | "moss" | "spark";
+type RouteEncounterId = "wild" | "bird" | "ember" | "moss" | "spark" | "frost" | "lantern" | "breeze";
 type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "angela";
 type Position = { x: number; y: number };
 type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
-type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
-type CollectionView = "bag" | "dex";
+type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath" | "highland";
+type BattleReturnPhase = "road" | "highland";
+type CollectionView = "bag" | "storage" | "dex";
 type WildBattleResult = "active" | "captured" | "victory" | "escaped" | "defeat";
 type HomeDiscovery = "photo" | "letter" | "breakfast";
 type HomeStoryId = "wake" | HomeDiscovery | "door";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit" | "fire" | "earth" | "lightning" | "ice";
 type PetStats = { hp: number; attack: number; defense: number; spirit: number; speed: number };
 type PetSkill = { name: string; level: number; element: PetElement; power: number | null; description: string };
-type PetProgress = { id: PetSpeciesId; level: number; experience: number; equippedSkills: string[] };
+type PetProgress = { id: PetSpeciesId; level: number; experience: number; equippedSkills: string[]; evolved: boolean };
+type PetEvolution = { level: number; name: string; crystalCost: number; description: string };
 type PetSpecies = {
   id: PetSpeciesId;
   number: number;
@@ -80,12 +83,16 @@ type SaveData = {
   captured: boolean;
   capturedPetId?: RouteEncounterId;
   ownedPetIds?: PetSpeciesId[];
+  storedPetIds?: PetSpeciesId[];
   seenPetIds?: PetSpeciesId[];
   activePetId?: PetSpeciesId;
   petProgress?: PetProgress[];
   homeDiscoveries?: HomeDiscovery[];
   inventory?: AdventureInventory;
   fieldResearch?: FieldResearch;
+  prologueComplete?: boolean;
+  highlandAltarFound?: boolean;
+  battleReturnPhase?: BattleReturnPhase;
 };
 
 type Partner = {
@@ -430,6 +437,20 @@ const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
   },
 };
 
+const PET_EVOLUTIONS: Partial<Record<PetSpeciesId, PetEvolution>> = {
+  leaf: { level: 10, name: "叶冠精灵", crystalCost: 2, description: "嫩叶舒展成冠，治愈灵力与生命力同步成长。" },
+  metal: { level: 10, name: "铠尾灵狐", crystalCost: 2, description: "尾甲完成重铸，能在突进中展开反击装甲。" },
+  tide: { level: 10, name: "潮汐水獭", crystalCost: 2, description: "尾部凝成潮环，能够调动更大范围的水流。" },
+  wild: { level: 11, name: "森角鼠王", crystalCost: 2, description: "茸角长成林冠形态，会主动保护弱小的同伴。" },
+  bird: { level: 11, name: "银翼巡风", crystalCost: 2, description: "银羽连成风翼，速度与连续攻击能力大幅提升。" },
+  ember: { level: 10, name: "炽尾火狸", crystalCost: 2, description: "尾焰稳定为炽红灵火，不再畏惧寒冷与黑暗。" },
+  moss: { level: 10, name: "古苔岩龟", crystalCost: 2, description: "背甲长出古老苔纹，防御与大地灵力更加坚实。" },
+  spark: { level: 12, name: "雷晶灵貂", crystalCost: 2, description: "尾尖凝成雷晶，能把积蓄的电流一次释放。" },
+  frost: { level: 14, name: "极光霜鹿", crystalCost: 3, description: "冰角折射出极光，成为高原风雪中的引路者。" },
+  lantern: { level: 16, name: "星河灯魟", crystalCost: 3, description: "胸前星灯化作星河纹路，能回应更遥远的灵契。" },
+  breeze: { level: 12, name: "云铃天羊", crystalCost: 2, description: "云绒托起全身，颈铃会召来持续不断的顺风。" },
+};
+
 const STARTER_SIGHTINGS: PetSpeciesId[] = ["leaf", "metal", "tide"];
 
 function mergePetIds(...groups: PetSpeciesId[][]) {
@@ -442,11 +463,11 @@ function isPetSpeciesId(value: unknown): value is PetSpeciesId {
 
 function storySightingsForPhase(phase: Phase) {
   const sightings = [...STARTER_SIGHTINGS];
-  if (["exam", "festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("bird", "breeze");
-  if (["festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("ember", "spark");
-  if (["rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("frost", "lantern");
-  if (["aftermath", "ending"].includes(phase)) sightings.push("moss");
-  if (["boss", "aftermath", "ending"].includes(phase)) sightings.push("guardian");
+  if (["exam", "festival", "rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("bird", "breeze");
+  if (["festival", "rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("ember", "spark");
+  if (["rupture", "boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("frost", "lantern");
+  if (["aftermath", "ending", "highland"].includes(phase)) sightings.push("moss");
+  if (["boss", "aftermath", "ending", "highland"].includes(phase)) sightings.push("guardian");
   return sightings;
 }
 
@@ -465,6 +486,7 @@ function createPetProgress(id: PetSpeciesId): PetProgress {
     level: species.defaultLevel,
     experience: 0,
     equippedSkills: [firstAttack, firstSupport, ...remainingSkills].filter((skill): skill is PetSkill => Boolean(skill)).slice(0, 4).map((skill) => skill.name),
+    evolved: false,
   };
 }
 
@@ -483,6 +505,7 @@ function normalizePetProgress(value: unknown, id: PetSpeciesId): PetProgress {
     level,
     experience: typeof saved.experience === "number" ? Math.max(0, Math.floor(saved.experience)) : 0,
     equippedSkills: equippedSkills.length > 0 ? equippedSkills : fallback.equippedSkills,
+    evolved: Boolean(saved.evolved),
   };
 }
 
@@ -502,9 +525,14 @@ function addPetExperience(progress: PetProgress, amount: number) {
   return { ...progress, level, experience, equippedSkills };
 }
 
-function scaledPetStats(species: PetSpecies, level: number) {
+function scaledPetStats(species: PetSpecies, level: number, evolved = false) {
   const growth = Math.max(0, level - species.defaultLevel);
-  return Object.fromEntries(Object.entries(species.stats).map(([key, value]) => [key, Math.min(99, value + growth * 2)])) as PetStats;
+  const evolutionBonus = evolved ? 9 : 0;
+  return Object.fromEntries(Object.entries(species.stats).map(([key, value]) => [key, Math.min(99, value + growth * 2 + evolutionBonus)])) as PetStats;
+}
+
+function petDisplayName(id: PetSpeciesId, progress?: PetProgress | null) {
+  return progress?.evolved ? PET_EVOLUTIONS[id]?.name ?? PET_SPECIES[id].name : PET_SPECIES[id].name;
 }
 
 function petBattleFxKind(element: PetElement): BattleFxKind {
@@ -544,6 +572,7 @@ const SCENE_ART: Record<Phase, string> = {
   rupture: "./pixel/map-ruptured-plaza.webp?v=4",
   boss: "./pixel/spirit-sanctum.webp?v=2",
   aftermath: "./pixel/map-spirit-temple.webp?v=4",
+  highland: "./pixel/map-east-highland.webp?v=4",
   ending: "./pixel/map-east-highland.webp?v=4",
 };
 
@@ -588,14 +617,22 @@ const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
   ember: { id: "ember", name: "火绒狸", kind: "火焰系", level: 4, maxHp: 34 },
   moss: { id: "moss", name: "苔甲龟", kind: "岩土系", level: 4, maxHp: 42 },
   spark: { id: "spark", name: "霆尾貂", kind: "雷电系", level: 5, maxHp: 30 },
+  frost: { id: "frost", name: "霜角鹿", kind: "冰霜系", level: 8, maxHp: 48 },
+  lantern: { id: "lantern", name: "星灯魟", kind: "灵契系", level: 10, maxHp: 52 },
+  breeze: { id: "breeze", name: "风铃羊", kind: "飞行系", level: 7, maxHp: 44 },
 };
 
 function isRouteEncounterId(value: unknown): value is RouteEncounterId {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(ROUTE_ENCOUNTERS, value);
 }
 
-function randomRouteEncounter(): RouteEncounterId {
+function randomRouteEncounter(mapId: BattleReturnPhase): RouteEncounterId {
   const roll = Math.random();
+  if (mapId === "highland") {
+    if (roll < 0.46) return "breeze";
+    if (roll < 0.84) return "frost";
+    return "lantern";
+  }
   if (roll < 0.34) return "wild";
   if (roll < 0.52) return "bird";
   if (roll < 0.70) return "ember";
@@ -674,6 +711,16 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
     missionText: "中央晶核阻断了直路，从左右回廊绕行至记忆祭台。",
     collisionText: "虚空、能量渠、立柱、雕像和破碎晶核不能穿过。",
   },
+  highland: {
+    id: "highland",
+    image: SCENE_ART.highland,
+    name: "东之高原 · 断风遗迹",
+    start: { x: 17, y: 84 },
+    interaction: { x: 81, y: 13 },
+    missionTitle: "第一章 · 黑铃回声",
+    missionText: "从调查营地出发，穿过两座悬空石桥，前往东北方的黑铃祭台。",
+    collisionText: "云海、悬崖、石墙和遗迹残柱都无法通行。",
+  },
 };
 
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
@@ -687,7 +734,8 @@ const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
   festival: [SCENE_ART.rupture, PET_ART.frost, PET_ART.lantern],
   rupture: [SCENE_ART.boss],
   boss: [SCENE_ART.aftermath],
-  aftermath: [SCENE_ART.ending],
+  aftermath: [SCENE_ART.ending, SCENE_ART.highland, PET_ART.frost, PET_ART.lantern, PET_ART.breeze],
+  highland: [SCENE_ART.city],
 };
 
 const RUPTURE_NODE_POSITIONS: Position[] = [
@@ -801,27 +849,39 @@ const PET_STAT_LABELS: Array<{ key: keyof PetStats; label: string }> = [
 function PetCollectionModal({
   initialView,
   ownedPetIds,
+  storedPetIds,
   seenPetIds,
   starterId,
   activePetId,
   petProgress,
+  inventory,
   managementLocked,
   onSetActivePet,
   onEquipSkill,
+  onMoveToStorage,
+  onMoveToParty,
+  onEvolve,
   onClose,
 }: {
   initialView: CollectionView;
   ownedPetIds: PetSpeciesId[];
+  storedPetIds: PetSpeciesId[];
   seenPetIds: PetSpeciesId[];
   starterId: PartnerId | null;
   activePetId: PetSpeciesId | null;
   petProgress: PetProgress[];
+  inventory: AdventureInventory;
   managementLocked: boolean;
   onSetActivePet: (id: PetSpeciesId) => void;
   onEquipSkill: (id: PetSpeciesId, slot: number, skillName: string) => void;
+  onMoveToStorage: (id: PetSpeciesId) => void;
+  onMoveToParty: (id: PetSpeciesId) => void;
+  onEvolve: (id: PetSpeciesId) => void;
   onClose: () => void;
 }) {
-  const initialSelection = initialView === "bag" ? activePetId ?? ownedPetIds[0] ?? starterId ?? "leaf" : starterId ?? PET_SPECIES_ORDER[0];
+  const initialSelection = initialView === "bag"
+    ? activePetId ?? ownedPetIds[0] ?? starterId ?? "leaf"
+    : initialView === "storage" ? storedPetIds[0] ?? ownedPetIds[0] ?? starterId ?? "leaf" : starterId ?? PET_SPECIES_ORDER[0];
   const [view, setView] = useState<CollectionView>(initialView);
   const [selectedId, setSelectedId] = useState<PetSpeciesId>(initialSelection);
   const owned = useMemo(() => new Set(ownedPetIds), [ownedPetIds]);
@@ -830,35 +890,38 @@ function PetCollectionModal({
   const selected = PET_SPECIES[selectedId];
   const selectedProgress = progressById.get(selectedId);
   const selectedLevel = selectedProgress?.level ?? selected.defaultLevel;
-  const selectedStats = scaledPetStats(selected, selectedLevel);
+  const selectedStats = scaledPetStats(selected, selectedLevel, selectedProgress?.evolved);
   const selectedKnown = owned.has(selectedId) || seen.has(selectedId);
-  const list = view === "bag" ? ownedPetIds : PET_SPECIES_ORDER;
+  const evolution = PET_EVOLUTIONS[selectedId];
+  const list = view === "bag" ? ownedPetIds : view === "storage" ? storedPetIds : PET_SPECIES_ORDER;
 
   const changeView = (next: CollectionView) => {
     setView(next);
     if (next === "bag" && !owned.has(selectedId)) setSelectedId(ownedPetIds[0] ?? starterId ?? "leaf");
+    if (next === "storage" && !storedPetIds.includes(selectedId)) setSelectedId(storedPetIds[0] ?? ownedPetIds[0] ?? starterId ?? "leaf");
   };
 
   return (
     <div className="modal-backdrop collection-backdrop" onClick={onClose}>
-      <section className="collection-modal" onClick={(event) => event.stopPropagation()} aria-label={view === "bag" ? "宠物背包" : "宠物图鉴"}>
+      <section className="collection-modal" onClick={(event) => event.stopPropagation()} aria-label={view === "bag" ? "宠物背包" : view === "storage" ? "宠物仓库" : "宠物图鉴"}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
         <header className="collection-header">
-          <div><small>SPIRIT ARCHIVE</small><h2>{view === "bag" ? "宠物背包" : "宠物图鉴"}</h2></div>
+          <div><small>SPIRIT ARCHIVE</small><h2>{view === "bag" ? "宠物背包" : view === "storage" ? "宠物仓库" : "宠物图鉴"}</h2></div>
           <div className="collection-progress">
-            <span>{view === "bag" ? "同行席位" : "已发现"}</span>
-            <b>{view === "bag" ? `${ownedPetIds.length} / 6` : `${seen.size} / ${PET_SPECIES_ORDER.length}`}</b>
+            <span>{view === "bag" ? "同行席位" : view === "storage" ? "寄存伙伴" : "已发现"}</span>
+            <b>{view === "bag" ? `${ownedPetIds.length} / 6` : view === "storage" ? storedPetIds.length : `${seen.size} / ${PET_SPECIES_ORDER.length}`}</b>
           </div>
         </header>
 
         <nav className="collection-tabs" aria-label="宠物资料分类">
           <button type="button" className={view === "bag" ? "active" : ""} onClick={() => changeView("bag")}><i>包</i><span>宠物背包<small>同行伙伴</small></span></button>
+          <button type="button" className={view === "storage" ? "active" : ""} onClick={() => changeView("storage")}><i>仓</i><span>宠物仓库<small>队伍调度</small></span></button>
           <button type="button" className={view === "dex" ? "active" : ""} onClick={() => changeView("dex")}><i>鉴</i><span>宠物图鉴<small>发现记录</small></span></button>
         </nav>
 
         <div className="collection-content">
           <div className={`pet-entry-list ${view === "dex" ? "dex-grid" : "bag-list"}`}>
-            {list.length === 0 && <div className="empty-pet-bag"><b>背包还是空的</b><p>选择第一位伙伴后，宠物资料会出现在这里。</p></div>}
+            {list.length === 0 && <div className="empty-pet-bag"><b>{view === "storage" ? "仓库还是空的" : "背包还是空的"}</b><p>{view === "storage" ? "队伍满员后，新捕捉的宠物会自动来到这里。" : "选择第一位伙伴后，宠物资料会出现在这里。"}</p></div>}
             {list.map((id, index) => {
               const species = PET_SPECIES[id];
               const isOwned = owned.has(id);
@@ -875,8 +938,8 @@ function PetCollectionModal({
                 >
                   <span className="pet-entry-number">No.{String(species.number).padStart(3, "0")}</span>
                   <div className="pet-entry-sprite"><PetSprite id={id} size={view === "bag" ? "md" : "sm"} /></div>
-                  <span className="pet-entry-copy"><b>{isSeen ? species.name : "未记录"}</b><small>{isSeen ? species.elementLabel : "???"}</small></span>
-                  <em>{view === "bag" ? `Lv.${progress?.level ?? species.defaultLevel}` : state}</em>
+                  <span className="pet-entry-copy"><b>{isSeen ? petDisplayName(id, progress) : "未记录"}</b><small>{isSeen ? species.elementLabel : "???"}</small></span>
+                  <em>{view === "bag" || view === "storage" ? `Lv.${progress?.level ?? species.defaultLevel}` : state}</em>
                   {view === "bag" && <i className="party-slot">{String(index + 1).padStart(2, "0")}</i>}
                 </button>
               );
@@ -893,23 +956,32 @@ function PetCollectionModal({
               </div>
             ) : (
               <>
-                <div className="pet-detail-hero">
+                <div className={`pet-detail-hero${selectedProgress?.evolved ? " is-evolved" : ""}`}>
                   <div className="pet-detail-sprite"><PetSprite id={selected.id} size="xl" /><span>Lv.{selectedLevel}</span></div>
                   <div className="pet-detail-title">
                     <small>No.{String(selected.number).padStart(3, "0")} · {selected.category}</small>
-                    <h3>{selected.name}</h3>
+                    <h3>{petDisplayName(selected.id, selectedProgress)}</h3>
                     <div><span>{selected.elementLabel}</span><span>{selected.rarity}</span><span>{selected.role}</span></div>
                   </div>
                 </div>
                 <p className="pet-description">{selected.description}</p>
                 <div className="pet-habitat"><span>主要栖息地</span><b>{selected.habitat}</b></div>
-                {view === "bag" && selectedProgress && (
+                {(view === "bag" || view === "storage") && selectedProgress && (
                   <div className="pet-roster-controls">
                     <div className="pet-exp-block">
                       <span><b>成长经验</b><em>{selectedProgress.experience} / {experienceToNextLevel(selectedProgress.level)}</em></span>
                       <i><b style={{ width: `${(selectedProgress.experience / experienceToNextLevel(selectedProgress.level)) * 100}%` }} /></i>
                     </div>
-                    <button type="button" disabled={selectedId === activePetId || managementLocked} onClick={() => onSetActivePet(selectedId)}>{selectedId === activePetId ? "当前首发" : managementLocked ? "战斗中不可调整" : "设为首发伙伴"}</button>
+                    {view === "bag" ? <>
+                      <button type="button" disabled={selectedId === activePetId || managementLocked} onClick={() => onSetActivePet(selectedId)}>{selectedId === activePetId ? "当前首发" : managementLocked ? "战斗中不可调整" : "设为首发伙伴"}</button>
+                      <button type="button" disabled={selectedId === activePetId || managementLocked || ownedPetIds.length <= 1} onClick={() => onMoveToStorage(selectedId)}>送往仓库</button>
+                    </> : <button type="button" disabled={ownedPetIds.length >= 6 || managementLocked} onClick={() => onMoveToParty(selectedId)}>{ownedPetIds.length >= 6 ? "队伍已满" : "加入同行队伍"}</button>}
+                  </div>
+                )}
+                {selectedProgress && evolution && (
+                  <div className={`pet-evolution-card${selectedProgress.evolved ? " evolved" : ""}`}>
+                    <span><small>{selectedProgress.evolved ? "EVOLUTION COMPLETE" : "EVOLUTION"}</small><b>{selectedProgress.evolved ? evolution.name : `${selected.name} → ${evolution.name}`}</b><p>{evolution.description}</p></span>
+                    <button type="button" disabled={selectedProgress.evolved || selectedProgress.level < evolution.level || inventory.crystals < evolution.crystalCost || managementLocked} onClick={() => onEvolve(selectedId)}>{selectedProgress.evolved ? "进化完成" : selectedProgress.level < evolution.level ? `需要 Lv.${evolution.level}` : inventory.crystals < evolution.crystalCost ? `灵契晶片 ${inventory.crystals}/${evolution.crystalCost}` : `消耗 ${evolution.crystalCost} 晶片进化`}</button>
                   </div>
                 )}
                 <div className="pet-detail-columns">
@@ -919,14 +991,14 @@ function PetCollectionModal({
                     <small>基础能力上限为 100，实际数值会随等级成长。</small>
                   </section>
                   <section className="pet-skill-panel">
-                    <h4>{view === "bag" && selectedProgress ? "技能配置 · 4 个技能槽" : "技能记录"}</h4>
+                    <h4>{(view === "bag" || view === "storage") && selectedProgress ? "技能配置 · 4 个技能槽" : "技能记录"}</h4>
                     {selected.skills.map((skill) => {
                       const unlocked = skill.level <= selectedLevel;
                       const equippedSlot = selectedProgress?.equippedSkills.indexOf(skill.name) ?? -1;
                       return <div className={`pet-skill element-${skill.element}${unlocked ? "" : " skill-locked"}`} key={skill.name}>
                         <span><i>Lv.{skill.level}</i><b>{unlocked ? skill.name : "尚未领悟"}</b><em>{unlocked ? skill.power === null ? "变化" : `威力 ${skill.power}` : `Lv.${skill.level} 解锁`}</em></span>
                         <p>{unlocked ? skill.description : "继续获得经验并提升等级后即可查看。"}</p>
-                        {view === "bag" && selectedProgress && unlocked && <div className="skill-slot-actions"><span>{equippedSlot >= 0 ? `已装备在技能 ${equippedSlot + 1}` : "可装备"}</span>{[0, 1, 2, 3].map((slot) => <button type="button" key={slot} className={equippedSlot === slot ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, slot, skill.name)}>技能 {slot + 1}</button>)}</div>}
+                        {(view === "bag" || view === "storage") && selectedProgress && unlocked && <div className="skill-slot-actions"><span>{equippedSlot >= 0 ? `已装备在技能 ${equippedSlot + 1}` : "可装备"}</span>{[0, 1, 2, 3].map((slot) => <button type="button" key={slot} className={equippedSlot === slot ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, slot, skill.name)}>技能 {slot + 1}</button>)}</div>}
                       </div>;
                     })}
                   </section>
@@ -959,7 +1031,7 @@ function FieldCampModal({
       <section className="field-camp-modal" onClick={(event) => event.stopPropagation()} aria-label="青崖调查营地">
         <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
         <header><small>QINGYA FIELD CAMP</small><h2>青崖调查营地</h2><p>休整、补充捕捉用品，并提交这片水道的生态记录。</p></header>
-        <div className="camp-wallet"><span>持有金币</span><b>{inventory.coins}</b><i>胶囊 {inventory.capsules}</i><i>莓果 {inventory.berries}</i></div>
+        <div className="camp-wallet"><span>持有金币</span><b>{inventory.coins}</b><i>胶囊 {inventory.capsules}</i><i>莓果 {inventory.berries}</i><i>灵契晶片 {inventory.crystals}</i></div>
         <div className="camp-layout">
           <section className="camp-shop">
             <h3>旅行补给</h3>
@@ -976,7 +1048,7 @@ function FieldCampModal({
             <div><span>完成野外战斗</span><b>{Math.min(research.resolvedBattles, FIELD_RESEARCH_REQUIREMENTS.battles)} / {FIELD_RESEARCH_REQUIREMENTS.battles}</b></div>
             <div><span>完成捕捉</span><b>{Math.min(research.capturedPets, FIELD_RESEARCH_REQUIREMENTS.captures)} / {FIELD_RESEARCH_REQUIREMENTS.captures}</b></div>
             <button type="button" disabled={!researchReady || research.claimed} onClick={onClaim}>{research.claimed ? "报酬已领取" : researchReady ? "提交记录 · 领取报酬" : "调查尚未完成"}</button>
-            <small>报酬：金币 120 · 召唤胶囊 3 · 香甜莓果 2</small>
+            <small>报酬：金币 120 · 召唤胶囊 3 · 香甜莓果 2 · 灵契晶片 2</small>
           </section>
         </div>
       </section>
@@ -1489,7 +1561,7 @@ function ExplorationScene({
         </div>
       )}
       {encounterPending && <div className="encounter-transition"><i /><i /><strong>!</strong><p>{toast}</p></div>}
-      <div className="field-toast"><span>{roadInGrass ? "草" : map.id === "rupture" ? "契" : map.id === "aftermath" ? "忆" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
+      <div className="field-toast"><span>{roadInGrass ? "草" : map.id === "rupture" ? "契" : map.id === "aftermath" ? "忆" : map.id === "highland" ? "原" : "路"}</span><p>{toast}</p><kbd>E</kbd></div>
       <DPad disabled={!mapReady || movementDisabled} onDirectionStart={startTouchDirection} onDirectionEnd={stopTouchDirection} onInteract={interact} />
       <span className="map-control-hint">WASD / 方向键移动 · E 互动</span>
     </section>
@@ -1508,6 +1580,7 @@ export default function Home() {
   const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
   const [fieldCampOpen, setFieldCampOpen] = useState(false);
   const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
+  const [storedPetIds, setStoredPetIds] = useState<PetSpeciesId[]>([]);
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
   const [activePetId, setActivePetId] = useState<PetSpeciesId | null>(null);
   const [petProgress, setPetProgress] = useState<PetProgress[]>([]);
@@ -1531,6 +1604,9 @@ export default function Home() {
   const [encounterPending, setEncounterPending] = useState(false);
   const [inventory, setInventory] = useState<AdventureInventory>({ ...INITIAL_INVENTORY });
   const [fieldResearch, setFieldResearch] = useState<FieldResearch>({ ...INITIAL_FIELD_RESEARCH });
+  const [prologueComplete, setPrologueComplete] = useState(false);
+  const [highlandAltarFound, setHighlandAltarFound] = useState(false);
+  const [battleReturnPhase, setBattleReturnPhase] = useState<BattleReturnPhase>("road");
   const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
   const preloadedAssetsRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -1547,6 +1623,8 @@ export default function Home() {
   const [wildPlayerHp, setWildPlayerHp] = useState(66);
   const [wildCalm, setWildCalm] = useState(0);
   const [wildBattleResult, setWildBattleResult] = useState<WildBattleResult>("active");
+  const [wildPartyHp, setWildPartyHp] = useState<Partial<Record<PetSpeciesId, number>>>({});
+  const [battlePartyOpen, setBattlePartyOpen] = useState(false);
   const [captureLog, setCaptureLog] = useState("茸角鼠被荆棘缠住，正警惕地望着你。");
   const [cityDialogueOpen, setCityDialogueOpen] = useState(false);
   const [festivalDialogueOpen, setFestivalDialogueOpen] = useState(false);
@@ -1567,7 +1645,7 @@ export default function Home() {
 
   const activeProgress = activePetId ? petProgress.find((entry) => entry.id === activePetId) ?? createPetProgress(activePetId) : null;
   const activeSpecies = activePetId ? PET_SPECIES[activePetId] : null;
-  const activeStats = activeSpecies && activeProgress ? scaledPetStats(activeSpecies, activeProgress.level) : null;
+  const activeStats = activeSpecies && activeProgress ? scaledPetStats(activeSpecies, activeProgress.level, activeProgress.evolved) : null;
   const activePetHp = activeStats?.hp;
   const activePetHpRef = useRef(activePetHp);
   const equippedSkillDefinitions = activeSpecies && activeProgress
@@ -1577,7 +1655,7 @@ export default function Home() {
   const secondaryBattleSkill = equippedSkillDefinitions.find((skill) => skill.power === null) ?? equippedSkillDefinitions[1] ?? equippedSkillDefinitions[0] ?? null;
   const partner: Partner | null = activeSpecies && activeStats ? {
     id: activeSpecies.id,
-    name: activeSpecies.name,
+    name: petDisplayName(activeSpecies.id, activeProgress),
     kind: activeSpecies.elementLabel,
     nature: activeSpecies.role,
     quote: activeSpecies.description,
@@ -1587,7 +1665,7 @@ export default function Home() {
     support: secondaryBattleSkill?.name ?? primaryBattleSkill?.name ?? "守护姿态",
   } : null;
   const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
-  const activeMap = (["road", "city", "festival", "rupture", "aftermath"] as Phase[]).includes(phase)
+  const activeMap = (["road", "city", "festival", "rupture", "aftermath", "highland"] as Phase[]).includes(phase)
     ? EXPLORATION_MAPS[phase as ExplorationPhase]
     : null;
   const mapAssetReady = activeMap !== null && loadedMapId === activeMap.id;
@@ -1635,15 +1713,19 @@ export default function Home() {
       captured,
       capturedPetId: captured ? routeEncounterId : undefined,
       ownedPetIds,
+      storedPetIds,
       seenPetIds,
       activePetId: activePetId ?? undefined,
       petProgress,
       homeDiscoveries,
       inventory,
       fieldResearch,
+      prologueComplete,
+      highlandAltarFound,
+      battleReturnPhase,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [activePetId, captured, fieldResearch, homeDiscoveries, inventory, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
+  }, [activePetId, battleReturnPhase, captured, fieldResearch, highlandAltarFound, homeDiscoveries, inventory, ownedPetIds, partnerId, petProgress, phase, playerName, prologueComplete, routeEncounterId, seenPetIds, storedPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -1713,7 +1795,7 @@ export default function Home() {
   const prepareExplorationMap = useCallback((next: Phase) => {
     if (!(next in EXPLORATION_MAPS)) return;
     setLoadedMapId(null);
-    if (next === "road") return;
+    if (next === "road" || next === "highland") return;
     const map = EXPLORATION_MAPS[next as ExplorationPhase];
     setRoadPos(map.start);
     roadPositionLiveRef.current = map.start;
@@ -1742,6 +1824,7 @@ export default function Home() {
     if (next === "rupture") registerPetSightings(["frost", "lantern"]);
     if (next === "aftermath") registerPetSightings(["moss"]);
     if (next === "boss") registerPetSightings(["guardian"]);
+    if (next === "highland") registerPetSightings(["frost", "lantern", "breeze"]);
     if (next === "exam" && activePetHpRef.current) setExamHp(activePetHpRef.current);
     if (next === "boss" && activePetHpRef.current) setBossPlayerHp(activePetHpRef.current);
     if (next === "city") setCityDialogueOpen(false);
@@ -1749,6 +1832,18 @@ export default function Home() {
     if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
   }, [playTone, prepareExplorationMap, registerPetSightings]);
+
+  const enterHighland = useCallback(() => {
+    const start = EXPLORATION_MAPS.highland.start;
+    setPrologueComplete(true);
+    setRoadPos(start);
+    roadPositionLiveRef.current = start;
+    setRoadFacing("up");
+    setRoadInGrass(false);
+    roadInGrassRef.current = false;
+    setToast(EXPLORATION_MAPS.highland.missionText);
+    go("highland");
+  }, [go]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -1759,6 +1854,7 @@ export default function Home() {
     setCollectionView(null);
     setFieldCampOpen(false);
     setOwnedPetIds([]);
+    setStoredPetIds([]);
     setSeenPetIds([]);
     setActivePetId(null);
     setPetProgress([]);
@@ -1784,12 +1880,17 @@ export default function Home() {
     setRouteEncounterId("wild");
     setInventory({ ...INITIAL_INVENTORY });
     setFieldResearch({ ...INITIAL_FIELD_RESEARCH });
+    setPrologueComplete(false);
+    setHighlandAltarFound(false);
+    setBattleReturnPhase("road");
     grassStepsRef.current = 0;
     grassTravelDistanceRef.current = 0;
     setWildHp(32);
     setWildPlayerHp(66);
     setWildCalm(0);
     setWildBattleResult("active");
+    setWildPartyHp({});
+    setBattlePartyOpen(false);
     setCaptureLog("高草突然晃动，一只茸角鼠警惕地跳了出来！");
     setCityDialogueOpen(false);
     setFestivalDialogueOpen(false);
@@ -1815,19 +1916,25 @@ export default function Home() {
       const restoredCapturedId: RouteEncounterId | null = saved.captured
         ? isRouteEncounterId(saved.capturedPetId) ? saved.capturedPetId : "wild"
         : null;
-      const restoredOwned = mergePetIds(
+      const allRestoredOwned = mergePetIds(
         (saved.ownedPetIds ?? []).filter(isPetSpeciesId),
         restoredPartnerId ? [restoredPartnerId] : [],
         restoredCapturedId ? [restoredCapturedId] : [],
       );
+      const restoredOwned = allRestoredOwned.slice(0, 6);
+      const restoredStored = mergePetIds(
+        (saved.storedPetIds ?? []).filter(isPetSpeciesId),
+        allRestoredOwned.slice(6),
+      ).filter((id) => !restoredOwned.includes(id));
       const restoredPhase = saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase;
       const restoredSeen = mergePetIds(
         storySightingsForPhase(restoredPhase),
         (saved.seenPetIds ?? []).filter(isPetSpeciesId),
         restoredOwned,
+        restoredStored,
       );
       const savedProgress = new Map((saved.petProgress ?? []).filter((entry) => isPetSpeciesId(entry?.id)).map((entry) => [entry.id, entry]));
-      const restoredProgress = restoredOwned.map((id) => normalizePetProgress(savedProgress.get(id), id));
+      const restoredProgress = mergePetIds(restoredOwned, restoredStored).map((id) => normalizePetProgress(savedProgress.get(id), id));
       const restoredActivePetId = isPetSpeciesId(saved.activePetId) && restoredOwned.includes(saved.activePetId)
         ? saved.activePetId
         : restoredPartnerId ?? restoredOwned[0] ?? null;
@@ -1838,11 +1945,15 @@ export default function Home() {
       setCaptured(Boolean(saved.captured));
       setRouteEncounterId(restoredCapturedId ?? "wild");
       setOwnedPetIds(restoredOwned);
+      setStoredPetIds(restoredStored);
       setSeenPetIds(restoredSeen);
       setActivePetId(restoredActivePetId);
       setPetProgress(restoredProgress);
       setInventory(normalizeInventory(saved.inventory));
       setFieldResearch(normalizeFieldResearch(saved.fieldResearch));
+      setPrologueComplete(Boolean(saved.prologueComplete) || ["ending", "highland"].includes(restoredPhase));
+      setHighlandAltarFound(Boolean(saved.highlandAltarFound));
+      setBattleReturnPhase(saved.battleReturnPhase === "highland" ? "highland" : "road");
       setFieldCampOpen(false);
       const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
       setHomePos(HOME_START);
@@ -1854,7 +1965,7 @@ export default function Home() {
       setShelterIntroOpen(false);
       if (restoredActivePetId) {
         const restoredActiveProgress = restoredProgress.find((entry) => entry.id === restoredActivePetId) ?? createPetProgress(restoredActivePetId);
-        const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level).hp;
+        const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level, restoredActiveProgress.evolved).hp;
         setExamHp(restoredHp);
         setBossPlayerHp(restoredHp);
         setWildPlayerHp(restoredHp);
@@ -1869,6 +1980,7 @@ export default function Home() {
   const selectPartner = (id: PartnerId) => {
     setPartnerId(id);
     setOwnedPetIds([id]);
+    setStoredPetIds([]);
     setActivePetId(id);
     setPetProgress([createPetProgress(id)]);
     registerPetSightings(STARTER_SIGHTINGS);
@@ -1881,14 +1993,40 @@ export default function Home() {
   const setLeadPet = useCallback((id: PetSpeciesId) => {
     if (!ownedPetIds.includes(id)) return;
     const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
-    const hp = scaledPetStats(PET_SPECIES[id], progress.level).hp;
+    const hp = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved).hp;
     setActivePetId(id);
     setExamHp(hp);
     setBossPlayerHp(hp);
     setWildPlayerHp(hp);
-    setToast(`${PET_SPECIES[id].name}成为了新的首发伙伴。`);
+    setToast(`${petDisplayName(id, progress)}成为了新的首发伙伴。`);
     playTone(680);
   }, [ownedPetIds, petProgress, playTone]);
+
+  const movePetToStorage = useCallback((id: PetSpeciesId) => {
+    if (id === activePetId || !ownedPetIds.includes(id) || ownedPetIds.length <= 1) return;
+    setOwnedPetIds((current) => current.filter((petId) => petId !== id));
+    setStoredPetIds((current) => mergePetIds(current, [id]));
+    setToast(`${petDisplayName(id, petProgress.find((entry) => entry.id === id))}已送往宠物仓库。`);
+    playTone(520);
+  }, [activePetId, ownedPetIds, petProgress, playTone]);
+
+  const movePetToParty = useCallback((id: PetSpeciesId) => {
+    if (!storedPetIds.includes(id) || ownedPetIds.length >= 6) return;
+    setStoredPetIds((current) => current.filter((petId) => petId !== id));
+    setOwnedPetIds((current) => mergePetIds(current, [id]).slice(0, 6));
+    setToast(`${petDisplayName(id, petProgress.find((entry) => entry.id === id))}加入了同行队伍。`);
+    playTone(680);
+  }, [ownedPetIds.length, petProgress, playTone, storedPetIds]);
+
+  const evolvePet = useCallback((id: PetSpeciesId) => {
+    const evolution = PET_EVOLUTIONS[id];
+    const progress = petProgress.find((entry) => entry.id === id);
+    if (!evolution || !progress || progress.evolved || progress.level < evolution.level || inventory.crystals < evolution.crystalCost) return;
+    setInventory((current) => ({ ...current, crystals: Math.max(0, current.crystals - evolution.crystalCost) }));
+    setPetProgress((current) => current.map((entry) => entry.id === id ? { ...entry, evolved: true } : entry));
+    setToast(`${PET_SPECIES[id].name}回应灵契晶片，进化为${evolution.name}！`);
+    playTone(920);
+  }, [inventory.crystals, petProgress, playTone]);
 
   const equipPetSkill = useCallback((id: PetSpeciesId, slot: number, skillName: string) => {
     setPetProgress((current) => current.map((entry) => {
@@ -1929,7 +2067,7 @@ export default function Home() {
     if (!result.claimed) return;
     setFieldResearch(result.research);
     setInventory(result.inventory);
-    setToast("青崖生态调查完成：获得 120 金币、3 枚胶囊和 2 份莓果。");
+    setToast("青崖生态调查完成：获得 120 金币、3 枚胶囊、2 份莓果和 2 枚灵契晶片。");
     playTone(860);
   }, [fieldResearch, inventory, playTone]);
 
@@ -1996,23 +2134,29 @@ export default function Home() {
     setHomeToast(next.length === 3 ? "重要的东西都确认过了。到正门按 E 前往照护所。" : `记住了这段线索。还剩 ${3 - next.length} 处。`);
   }, [go, homeDiscoveries, homeStory]);
 
-  const beginRouteEncounter = useCallback((id: RouteEncounterId) => {
+  const beginRouteEncounter = useCallback((id: RouteEncounterId, returnPhase: BattleReturnPhase) => {
     if (encounterPendingRef.current) return;
     encounterPendingRef.current = true;
     const encounter = ROUTE_ENCOUNTERS[id];
     grassTravelDistanceRef.current = 0;
     registerPetSightings([id]);
     setFieldResearch((current) => recordEncounter(current, id));
+    setBattleReturnPhase(returnPhase);
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
     setWildPlayerHp(activePetHpRef.current ?? 60);
+    setWildPartyHp(Object.fromEntries(ownedPetIds.map((petId) => {
+      const progress = petProgress.find((entry) => entry.id === petId) ?? createPetProgress(petId);
+      return [petId, scaledPetStats(PET_SPECIES[petId], progress.level, progress.evolved).hp];
+    })));
+    setBattlePartyOpen(false);
     setWildCalm(0);
     setWildBattleResult("active");
     setCaptureLog(`高草突然晃动，${encounter.name}警惕地跳了出来！`);
     setToast(`野生的${encounter.name}出现了！`);
     setEncounterPending(true);
     playTone(210);
-  }, [playTone, registerPetSightings]);
+  }, [ownedPetIds, petProgress, playTone, registerPetSightings]);
 
   const handleRoadPosition = useCallback((position: Position, distancePixels: number) => {
     roadPositionLiveRef.current = position;
@@ -2021,7 +2165,7 @@ export default function Home() {
     if (inGrass !== roadInGrassRef.current) {
       roadInGrassRef.current = inGrass;
       setRoadInGrass(inGrass);
-      if (inGrass) setToast(captured ? "高草沙沙作响。继续调查可能遇到不同的宠物。" : "高草在脚边晃动……");
+      if (inGrass) setToast(phase === "highland" ? "金色灌丛里传来陌生铃声。这里栖息着高原宠物。" : captured ? "高草沙沙作响。继续调查可能遇到不同的宠物。" : "高草在脚边晃动……");
       else if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
       else setToast(activeMap.missionText);
     }
@@ -2040,7 +2184,8 @@ export default function Home() {
     if (steps >= 9 || Math.random() < chance) {
       grassStepsRef.current = 0;
       setRoadPos(position);
-      beginRouteEncounter(randomRouteEncounter());
+      const returnPhase: BattleReturnPhase = phase === "highland" ? "highland" : "road";
+      beginRouteEncounter(randomRouteEncounter(returnPhase), returnPhase);
     }
   }, [activeMap, beginRouteEncounter, captured, phase]);
 
@@ -2081,6 +2226,11 @@ export default function Home() {
       return;
     }
     if (phase === "city" && distance(position, activeMap.interaction) < 8) {
+      if (prologueComplete) {
+        setToast("学院北门的升降索道已经恢复，正在前往东之高原。");
+        enterHighland();
+        return;
+      }
       setCityDialogueOpen(true);
       playTone(650);
       return;
@@ -2109,13 +2259,31 @@ export default function Home() {
       playTone(620);
       return;
     }
+    if (phase === "highland" && distance(position, activeMap.start) < 9) {
+      setToast("搭乘高原索道返回彩虹学院。随时可以从学院北门再次出发。");
+      go("city");
+      return;
+    }
+    if (phase === "highland" && distance(position, activeMap.interaction) < 9) {
+      if (!highlandAltarFound) {
+        setHighlandAltarFound(true);
+        setInventory((current) => ({ ...current, coins: current.coins + 160, crystals: current.crystals + 3 }));
+        setToast("在黑铃基座下发现了安琪儿留下的坐标。获得 160 金币与 3 枚灵契晶片。");
+        playTone(880);
+      } else {
+        setToast("黑铃内侧刻着同一行坐标：北方冻土 · 旧契约观测站。新的旅途尚未开放。");
+        playTone(620);
+      }
+      return;
+    }
 
     if (phase === "road") setToast(captured ? "沿可见道路前往东北城门，靠近后按 E。" : "进入金色高草移动，野生宠物会随机出现。");
     if (phase === "city") setToast("学院门位于地图上方；星泉、水渠和花坛均不可穿越。");
     if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
-  }, [activeMap, captured, collectionView, fieldCampOpen, fieldResearch, go, helpOpen, mapAssetReady, phase, playTone, ruptureNodes]);
+    if (phase === "highland") setToast("沿金色道路穿过悬桥；进入灌丛会遇到高原宠物。");
+  }, [activeMap, captured, collectionView, enterHighland, fieldCampOpen, fieldResearch, go, helpOpen, highlandAltarFound, mapAssetReady, phase, playTone, prologueComplete, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -2130,8 +2298,12 @@ export default function Home() {
 
   const finishWildBattle = (wasCaptured: boolean) => {
     const rewards = battleRewards(routeEncounter.level, wasCaptured);
+    const crystalReward = battleReturnPhase === "highland" && routeEncounter.level >= 8 ? 1 : 0;
+    const alreadyOwned = ownedPetIds.includes(routeEncounter.id) || storedPetIds.includes(routeEncounter.id);
+    const sentToStorage = wasCaptured && !alreadyOwned && ownedPetIds.length >= 6;
     setWildBattleResult(wasCaptured ? "captured" : "victory");
-    setInventory((current) => ({ ...current, coins: current.coins + rewards.coins }));
+    setBattlePartyOpen(false);
+    setInventory((current) => ({ ...current, coins: current.coins + rewards.coins, crystals: current.crystals + crystalReward }));
     setFieldResearch((current) => recordBattleResolution(current, wasCaptured));
     setPetProgress((current) => {
       const withCaptured = wasCaptured && !current.some((entry) => entry.id === routeEncounter.id)
@@ -2145,36 +2317,76 @@ export default function Home() {
     });
     if (wasCaptured) {
       setCaptured(true);
-      setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]));
+      if (!alreadyOwned) {
+        if (sentToStorage) setStoredPetIds((current) => mergePetIds(current, [routeEncounter.id]));
+        else setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]).slice(0, 6));
+      }
       registerPetSightings([routeEncounter.id]);
     }
-    return rewards;
+    return { ...rewards, crystalReward, sentToStorage, alreadyOwned };
   };
 
-  const wildCounterAttack = async (guarding = false, hpBeforeCounter = wildPlayerHp) => {
-    if (!partner) return false;
+  const wildCounterAttack = async (
+    guarding = false,
+    hpBeforeCounter = wildPlayerHp,
+    targetId = activePetId,
+    defense = activeStats?.defense ?? 45,
+    targetName = partner?.name ?? "伙伴",
+  ) => {
+    if (!targetId) return false;
     const incoming = calculateWildCounterDamage({
       enemyLevel: routeEncounter.level,
       enemyPower: 36 + routeEncounter.level * 2,
-      defense: activeStats?.defense ?? 45,
+      defense,
       guarding,
     });
     const nextHp = Math.max(0, hpBeforeCounter - incoming);
     setCaptureLog(`${routeEncounter.name}抓住空隙发动反击！`);
-    await animateBattleFx({ skill: `${routeEncounter.name}的反击`, kind: "claw", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => setWildPlayerHp(nextHp));
+    await animateBattleFx({ skill: `${routeEncounter.name}的反击`, kind: "claw", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => {
+      setWildPlayerHp(nextHp);
+      setWildPartyHp((current) => ({ ...current, [targetId]: nextHp }));
+    });
     if (nextHp <= 0) {
+      const reserve = ownedPetIds.find((id) => id !== targetId && (wildPartyHp[id] ?? 0) > 0);
+      if (reserve) {
+        setBattlePartyOpen(true);
+        setCaptureLog(`${targetName}失去了战斗能力！请选择一只仍能战斗的同行伙伴。`);
+        return true;
+      }
       const loss = Math.min(18, inventory.coins);
       setInventory((current) => ({ ...current, coins: Math.max(0, current.coins - loss) }));
       setWildBattleResult("defeat");
-      setCaptureLog(`${partner.name}失去了战斗能力。巡逻员把你们送回营地，遗失了 ${loss} 枚金币。`);
+      setCaptureLog(`同行队伍全部失去了战斗能力。巡逻员送你们回到安全地带，遗失了 ${loss} 枚金币。`);
       return true;
     }
     setCaptureLog(`${routeEncounter.name}的反击造成 ${incoming} 点伤害。`);
     return false;
   };
 
+  const switchWildPet = async (id: PetSpeciesId) => {
+    if (battleBusy || wildBattleResult !== "active" || id === activePetId || !ownedPetIds.includes(id)) return;
+    const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+    const stats = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved);
+    const storedHp = wildPartyHp[id] ?? stats.hp;
+    if (storedHp <= 0) return;
+    const forcedSwitch = wildPlayerHp <= 0;
+    if (activePetId) setWildPartyHp((current) => ({ ...current, [activePetId]: wildPlayerHp }));
+    setBattleBusy(true);
+    setActivePetId(id);
+    setWildPlayerHp(storedHp);
+    setBattlePartyOpen(false);
+    const nextName = petDisplayName(id, progress);
+    setCaptureLog(`${nextName}接替首发，进入战斗！`);
+    try {
+      await animateBattleFx({ skill: forcedSwitch ? "伙伴接力" : "主动换宠", kind: "call", attacker: "trainer", target: "ally", value: nextName, positive: true });
+      if (!forcedSwitch) await wildCounterAttack(false, storedHp, id, stats.defense, nextName);
+    } finally {
+      setBattleBusy(false);
+    }
+  };
+
   const captureAction = async (action: number | "calm" | "ball" | "escape") => {
-    if (wildBattleResult !== "active" || battleBusy || !partner || !activeSpecies || !activeProgress || !activeStats) return;
+    if (wildBattleResult !== "active" || battleBusy || wildPlayerHp <= 0 || !partner || !activeSpecies || !activeProgress || !activeStats) return;
     setBattleBusy(true);
     try {
       if (typeof action === "number") {
@@ -2186,7 +2398,10 @@ export default function Home() {
           const healedHp = Math.min(partner.hp, wildPlayerHp + healing);
           setCaptureLog(`${partner.name}准备使出${skill.name}。`);
           await animateBattleFx({ skill: skill.name, kind: guarding ? "guard" : "heal", attacker: "ally", target: "ally", value: guarding ? "防御提升" : `HP +${healing}`, positive: true }, () => {
-            if (healing > 0) setWildPlayerHp(healedHp);
+            if (healing > 0) {
+              setWildPlayerHp(healedHp);
+              if (activePetId) setWildPartyHp((current) => ({ ...current, [activePetId]: healedHp }));
+            }
           });
           await wildCounterAttack(guarding, healedHp);
           return;
@@ -2206,7 +2421,7 @@ export default function Home() {
         await animateBattleFx({ skill: skill.name, kind: petBattleFxKind(skill.element), attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
         if (nextHp <= 0) {
           const rewards = finishWildBattle(false);
-          setCaptureLog(`${routeEncounter.name}失去战斗能力。${effectiveness} 获得 ${rewards.experience} 经验与 ${rewards.coins} 金币。`);
+          setCaptureLog(`${routeEncounter.name}失去战斗能力。${effectiveness} 获得 ${rewards.experience} 经验、${rewards.coins} 金币${rewards.crystalReward ? `与 ${rewards.crystalReward} 枚灵契晶片` : ""}。`);
           playTone(820);
           return;
         }
@@ -2248,7 +2463,7 @@ export default function Home() {
         playTone(130);
         return;
       }
-      const chance = captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) });
+      const chance = captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) || storedPetIds.includes(routeEncounter.id) });
       const success = Math.random() < chance;
       setCaptureLog(`捕捉成功率约 ${Math.round(chance * 100)}%。召唤胶囊划出一道弧光……`);
       await animateBattleFx({ skill: "召唤胶囊", kind: "capsule", attacker: "trainer", target: "enemy", value: success ? "灵契成立" : "挣脱！", positive: success }, () => {
@@ -2256,7 +2471,7 @@ export default function Home() {
       });
       if (success) {
         const rewards = finishWildBattle(true);
-        setCaptureLog(`${routeEncounter.name}主动触碰胶囊，接受了你的邀请。获得 ${rewards.experience} 经验与 ${rewards.coins} 金币。`);
+        setCaptureLog(`${routeEncounter.name}主动触碰胶囊，接受了你的邀请。${rewards.alreadyOwned ? "你们的灵契变得更加稳固。" : rewards.sentToStorage ? "同行队伍已满，它已前往宠物仓库。" : "它加入了同行队伍。"} 获得 ${rewards.experience} 经验与 ${rewards.coins} 金币。`);
         playTone(860);
         return;
       }
@@ -2371,6 +2586,7 @@ export default function Home() {
     if (["title", "name", "home", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
     if (["city", "exam", "festival"].includes(phase)) return "序章 · 黄金庆典";
     if (["rupture", "boss", "aftermath"].includes(phase)) return "序章 · 灵契断裂";
+    if (phase === "highland") return "第一章 · 黑铃回声";
     return "序章 · 没有登记的伙伴";
   }, [phase]);
 
@@ -2386,7 +2602,7 @@ export default function Home() {
           </button>
           <div className="chapter-label"><span />{chapterLabel}</div>
           <div className="hud-actions">
-            {partner && <div className="adventure-wallet" aria-label="训练师背包资源"><span>金<b>{inventory.coins}</b></span><span>球<b>{inventory.capsules}</b></span><span>果<b>{inventory.berries}</b></span></div>}
+            {partner && <div className="adventure-wallet" aria-label="训练师背包资源"><span>金<b>{inventory.coins}</b></span><span>球<b>{inventory.capsules}</b></span><span>果<b>{inventory.berries}</b></span><span>晶<b>{inventory.crystals}</b></span></div>}
             {partner && <div className="partner-chip"><PetSprite id={partner.id} size="sm" /><span><small>{partner.kind}</small><b>{partner.name}</b></span></div>}
             {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("bag"); }} aria-label="打开宠物背包"><b>包</b><small>{ownedPetIds.length}/6</small></button>}
             {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("dex"); }} aria-label="打开宠物图鉴"><b>鉴</b><small>{seenPetIds.length}/{PET_SPECIES_ORDER.length}</small></button>}
@@ -2520,9 +2736,13 @@ export default function Home() {
           ] : phase === "rupture" ? [
             ...RUPTURE_NODE_POSITIONS.map((_, index) => ({ label: `稳定灵契节点 ${index + 1}`, done: ruptureNodes.includes(index) })),
             { label: "前往上方裂隙台", done: false },
-          ] : [
+          ] : phase === "aftermath" ? [
             { label: "绕开破碎万灵晶核", done: roadPos.y < 58 },
             { label: "抵达上方记忆祭台" },
+          ] : [
+            { label: "离开高原调查营地", done: roadPos.y < 76 },
+            { label: "穿过两座悬空石桥", done: roadPos.y < 46 },
+            { label: highlandAltarFound ? "黑铃坐标已记录" : "调查黑铃祭台", done: highlandAltarFound },
           ]}
           mapReady={mapAssetReady}
           movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || fieldCampOpen || helpOpen}
@@ -2532,7 +2752,7 @@ export default function Home() {
               <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${ROAD_START.x}%`, top: `${ROAD_START.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed ? "调查营地 · 可提交" : "青崖调查营地"}</span><i>补给 / 委托</i></button>
               <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>
             </>}
-            {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
+            {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}>{!prologueComplete && <Character name="诺亚" variant="noah" small />}<span>{prologueComplete ? "学院北门 · 高原索道" : "诺亚 · 学院门前"}</span><i>{prologueComplete ? "前往东之高原" : "按 E"}</i></button>}
             {phase === "city" && <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${EXPLORATION_MAPS.city.start.x}%`, top: `${EXPLORATION_MAPS.city.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>南门 · 青崖水道</span><i>返回野外</i></button>}
             {phase === "festival" && <>
               {FESTIVAL_HEROES.map((hero, index) => {
@@ -2550,6 +2770,10 @@ export default function Home() {
               <div className="map-character-marker temple-angela" style={{ left: "54%", top: "18%" }}><Character name="安琪儿" variant="angela" small /><span>安琪儿</span></div>
               <button type="button" className="map-landmark memory-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>记忆祭台</span><i>按 E</i></button>
             </>}
+            {phase === "highland" && <>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${activeMap.start.x}%`, top: `${activeMap.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>断风调查营地</span><i>返回彩虹城</i></button>
+              <button type="button" className={`map-landmark rift-landmark${highlandAltarFound ? "" : " landmark-ready"}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{highlandAltarFound ? "黑铃祭台 · 已调查" : "黑铃祭台"}</span><i>按 E</i></button>
+            </>}
           </>}
           onPosition={handleRoadPosition}
           onCommit={setRoadPos}
@@ -2560,35 +2784,48 @@ export default function Home() {
 
       {phase === "capture" && partner && (
         <section className={`battle-screen capture-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
-          <div className="battle-backdrop field-battle-bg"><i /><i /><i /></div>
+          <div className="battle-backdrop field-battle-bg" style={{ backgroundImage: `linear-gradient(rgba(8, 23, 29, 0.1), rgba(8, 23, 29, 0.3)), url(${SCENE_ART[battleReturnPhase]})` }}><i /><i /><i /></div>
           <BattleEffects fx={battleFx} />
-          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>青崖野外战</h2><p>观察属性与戒备，选择击败、捕捉或撤离。野生宠物也会反击。</p></div>
+          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>{battleReturnPhase === "highland" ? "东之高原野外战" : "青崖野外战"}</h2><p>观察属性与戒备，灵活换宠，选择击败、捕捉或撤离。</p></div>
           <div className="enemy-side">
             <div className="combatant-info"><span><b>{routeEncounter.name}</b><small>{routeEncounter.kind} · Lv.{routeEncounter.level}</small></span><em>{wildHp} / {routeEncounter.maxHp}</em><Meter value={wildHp} max={routeEncounter.maxHp} /></div>
             <div className={battleActorClass("enemy", battleFx)}><PetSprite id={routeEncounter.id} size="xl" /></div>
-            <div className="calm-indicator"><span>安抚 {wildCalm}/3 · 捕捉率 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) }) * 100)}%</span><Meter value={wildCalm} max={3} kind="calm" /></div>
+            <div className="calm-indicator"><span>安抚 {wildCalm}/3 · 捕捉率 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) || storedPetIds.includes(routeEncounter.id) }) * 100)}%</span><Meter value={wildCalm} max={3} kind="calm" /></div>
           </div>
           <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>{wildPlayerHp} / {partner.hp}</em><Meter value={wildPlayerHp} max={partner.hp} /></div></div>
+          {battlePartyOpen && <div className="battle-party-panel">
+            <header><span><small>PARTY</small><b>{wildPlayerHp <= 0 ? "选择接替伙伴" : "同行队伍"}</b></span><button type="button" disabled={wildPlayerHp <= 0 || battleBusy} onClick={() => setBattlePartyOpen(false)}>×</button></header>
+            <div>{ownedPetIds.map((id, index) => {
+              const progress = petProgress.find((entry) => entry.id === id) ?? createPetProgress(id);
+              const stats = scaledPetStats(PET_SPECIES[id], progress.level, progress.evolved);
+              const hp = id === activePetId ? wildPlayerHp : wildPartyHp[id] ?? stats.hp;
+              return <button type="button" key={id} className={`${id === activePetId ? "active " : ""}${hp <= 0 ? "fainted" : ""}`} disabled={battleBusy || id === activePetId || hp <= 0} onClick={() => switchWildPet(id)}>
+                <i>{index + 1}</i><PetSprite id={id} size="sm" /><span><b>{petDisplayName(id, progress)}</b><small>Lv.{progress.level} · {hp <= 0 ? "无法战斗" : `${hp}/${stats.hp}`}</small><Meter value={hp} max={stats.hp} /></span>
+              </button>;
+            })}</div>
+          </div>}
           <div className="battle-command">
-            <div className="battle-log"><span>行动记录 · 金币 {inventory.coins}</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : wildBattleResult === "active" ? "等待指令" : "战斗结束"}</i><p>{captureLog}</p></div>
+            <div className="battle-log"><span>行动记录 · 金币 {inventory.coins} · 晶片 {inventory.crystals}</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : wildBattleResult === "active" ? "等待指令" : "战斗结束"}</i><p>{captureLog}</p></div>
             {wildBattleResult === "active" ? <div className="command-grid wild-command-grid">
-              {equippedSkillDefinitions.map((skill, slot) => <button type="button" key={skill.name} disabled={battleBusy} onClick={() => captureAction(slot)}><span>技能 {String(slot + 1).padStart(2, "0")}</span><b>{skill.name}</b><small>{skill.power === null ? "变化技能" : `${skill.element === PET_SPECIES[routeEncounter.id].element ? "同系" : "属性"} · 威力 ${skill.power}`}</small></button>)}
-              <button type="button" disabled={battleBusy || inventory.berries <= 0} onClick={() => captureAction("calm")}><span>道具 · {inventory.berries}</span><b>香甜莓果</b><small>安抚并减轻反击</small></button>
-              <button type="button" disabled={battleBusy || inventory.capsules <= 0} className="ball-command" onClick={() => captureAction("ball")}><span>胶囊 · {inventory.capsules}</span><b>尝试捕捉</b><small>当前 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) }) * 100)}%</small></button>
-              <button type="button" disabled={battleBusy} onClick={() => captureAction("escape")}><span>行动</span><b>撤离战斗</b><small>速度越高越容易成功</small></button>
+              {equippedSkillDefinitions.map((skill, slot) => <button type="button" key={skill.name} disabled={battleBusy || wildPlayerHp <= 0} onClick={() => captureAction(slot)}><span>技能 {String(slot + 1).padStart(2, "0")}</span><b>{skill.name}</b><small>{skill.power === null ? "变化技能" : `${skill.element === PET_SPECIES[routeEncounter.id].element ? "同系" : "属性"} · 威力 ${skill.power}`}</small></button>)}
+              <button type="button" disabled={battleBusy || wildPlayerHp <= 0 || inventory.berries <= 0} onClick={() => captureAction("calm")}><span>道具 · {inventory.berries}</span><b>香甜莓果</b><small>安抚并减轻反击</small></button>
+              <button type="button" disabled={battleBusy || wildPlayerHp <= 0 || inventory.capsules <= 0} className="ball-command" onClick={() => captureAction("ball")}><span>胶囊 · {inventory.capsules}</span><b>尝试捕捉</b><small>当前 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) || storedPetIds.includes(routeEncounter.id) }) * 100)}%</small></button>
+              <button type="button" disabled={battleBusy} className="party-command" onClick={() => setBattlePartyOpen(true)}><span>队伍 · {ownedPetIds.length}</span><b>更换伙伴</b><small>{ownedPetIds.filter((id) => (id === activePetId ? wildPlayerHp : wildPartyHp[id] ?? 0) > 0).length} 只可战斗</small></button>
+              <button type="button" disabled={battleBusy || wildPlayerHp <= 0} onClick={() => captureAction("escape")}><span>行动</span><b>撤离战斗</b><small>速度越高越容易成功</small></button>
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => {
               const defeated = wildBattleResult === "defeat";
               const researchReady = isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed;
               if (defeated) {
-                setRoadPos(ROAD_START);
-                roadPositionLiveRef.current = ROAD_START;
+                const safeStart = EXPLORATION_MAPS[battleReturnPhase].start;
+                setRoadPos(safeStart);
+                roadPositionLiveRef.current = safeStart;
               }
-              setToast(defeated ? "巡逻员把你送回了青崖调查营地。" : researchReady ? "生态调查已经完成，返回下方营地提交记录。" : captured ? "可以继续调查高草，也可以前往东北方的彩虹城门。" : "返回高草后仍可继续尝试捕捉。 ");
+              setToast(defeated ? `巡逻员把你送回了${battleReturnPhase === "highland" ? "断风" : "青崖"}调查营地。` : battleReturnPhase === "highland" ? "高原的风再次响起。可继续调查灌丛或前往黑铃祭台。" : researchReady ? "生态调查已经完成，返回下方营地提交记录。" : captured ? "可以继续调查高草，也可以前往东北方的彩虹城门。" : "返回高草后仍可继续尝试捕捉。 ");
               setRoadInGrass(false);
               roadInGrassRef.current = false;
               grassStepsRef.current = 0;
               grassTravelDistanceRef.current = 0;
-              go("road");
+              go(battleReturnPhase);
             }}><span>{wildBattleResult === "captured" ? "带新伙伴返回地图" : wildBattleResult === "victory" ? "领取战利品并返回" : wildBattleResult === "defeat" ? "返回调查营地" : "退出高草"}</span><b>›</b></button>}
           </div>
         </section>
@@ -2645,7 +2882,7 @@ export default function Home() {
       )}
 
       {phase === "aftermath" && aftermathDialogueOpen && (
-        <Dialogue lines={AFTERMATH_LINES} onComplete={() => go("ending")} backdrop={<div className="temple-bg"><div className="temple-columns"><i /><i /><i /><i /></div><div className="crystal-core"><i /><span>万灵晶核</span></div><div className="temple-characters"><div><Character name="塞其" variant="sergi" /><span>塞其</span></div><div><Character name="安琪儿" variant="angela" /><span>安琪儿</span></div></div></div>} />
+        <Dialogue lines={AFTERMATH_LINES} onComplete={() => { setPrologueComplete(true); go("ending"); }} backdrop={<div className="temple-bg"><div className="temple-columns"><i /><i /><i /><i /></div><div className="crystal-core"><i /><span>万灵晶核</span></div><div className="temple-characters"><div><Character name="塞其" variant="sergi" /><span>塞其</span></div><div><Character name="安琪儿" variant="angela" /><span>安琪儿</span></div></div></div>} />
       )}
 
       {phase === "ending" && partner && (
@@ -2662,7 +2899,7 @@ export default function Home() {
               <div><small>下一目标</small><b>东之高原</b></div>
             </div>
             <div className="next-chapter"><span>第一章</span><div><b>不愿回家的宠物</b><small>TO BE CONTINUED</small></div></div>
-            <div className="ending-actions"><button type="button" className="primary-action dark" onClick={() => setPhase("title")}><span>保存并返回标题</span><b>›</b></button><button type="button" className="text-action" onClick={newGame}>重新体验序章</button></div>
+            <div className="ending-actions"><button type="button" className="primary-action dark" onClick={enterHighland}><span>进入第一章 · 东之高原</span><b>›</b></button><button type="button" className="text-action" onClick={() => setPhase("title")}>保存并返回标题</button></div>
           </div>
         </section>
       )}
@@ -2671,13 +2908,18 @@ export default function Home() {
         <PetCollectionModal
           initialView={collectionView}
           ownedPetIds={ownedPetIds}
+          storedPetIds={storedPetIds}
           seenPetIds={seenPetIds}
           starterId={partnerId}
           activePetId={activePetId}
           petProgress={petProgress}
+          inventory={inventory}
           managementLocked={battleBusy || ["capture", "exam", "boss"].includes(phase)}
           onSetActivePet={setLeadPet}
           onEquipSkill={equipPetSkill}
+          onMoveToStorage={movePetToStorage}
+          onMoveToParty={movePetToParty}
+          onEvolve={evolvePet}
           onClose={() => setCollectionView(null)}
         />
       )}
@@ -2697,8 +2939,8 @@ export default function Home() {
           <section className="help-modal" onClick={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setHelpOpen(false)} aria-label="关闭">×</button>
             <small>TRAINER HANDBOOK</small><h2>旅行手册</h2>
-            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、营地、发光物体或人物。</p></div><div><kbd>高草</kbd><b>重复遭遇</b><p>野生宠物会持续出现；可以战斗、捕捉或撤离。</p></div><div><kbd>营地</kbd><b>补给与委托</b><p>使用战斗所得金币购买胶囊和莓果，并提交生态调查。</p></div></div>
-            <p className="help-note">宠物拥有四个技能槽。等级、攻防、属性克制、体力、安抚程度与剩余物资都会影响野外战结果。</p>
+            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、营地、发光物体或人物。</p></div><div><kbd>队伍</kbd><b>六宠接力</b><p>野外战可随时换宠；一只倒下后由其他同行伙伴接替。</p></div><div><kbd>仓库</kbd><b>调度伙伴</b><p>队伍满员后新宠自动寄存，可在宠物背包中随时调整。</p></div><div><kbd>进化</kbd><b>灵契晶片</b><p>达到指定等级后消耗晶片进化，全面提高五项能力。</p></div><div><kbd>高原</kbd><b>第一章区域</b><p>通关序章后从学院北门前往，拥有独立宠物生态。</p></div></div>
+            <p className="help-note">宠物拥有四个技能槽。等级、攻防、属性克制、全队体力、安抚程度与剩余物资都会影响野外战结果。</p>
           </section>
         </div>
       )}

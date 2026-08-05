@@ -2,6 +2,7 @@ export type AdventureInventory = {
   coins: number;
   capsules: number;
   berries: number;
+  crystals: number;
 };
 
 export type FieldResearch = {
@@ -17,6 +18,7 @@ export const INITIAL_INVENTORY: AdventureInventory = {
   coins: 80,
   capsules: 5,
   berries: 3,
+  crystals: 0,
 };
 
 export const INITIAL_FIELD_RESEARCH: FieldResearch = {
@@ -55,6 +57,7 @@ export function normalizeInventory(value: unknown): AdventureInventory {
     coins: finiteNonNegative(saved.coins, INITIAL_INVENTORY.coins),
     capsules: finiteNonNegative(saved.capsules, INITIAL_INVENTORY.capsules),
     berries: finiteNonNegative(saved.berries, INITIAL_INVENTORY.berries),
+    crystals: finiteNonNegative(saved.crystals, INITIAL_INVENTORY.crystals),
   };
 }
 
@@ -100,6 +103,7 @@ export function claimFieldResearch(research: FieldResearch, inventory: Adventure
       coins: inventory.coins + 120,
       capsules: inventory.capsules + 3,
       berries: inventory.berries + 2,
+      crystals: inventory.crystals + 2,
     },
     claimed: true,
   };
@@ -113,6 +117,7 @@ export function buySupply(inventory: AdventureInventory, offerId: SupplyOfferId)
       coins: inventory.coins - offer.price,
       capsules: inventory.capsules + offer.capsules,
       berries: inventory.berries + offer.berries,
+      crystals: inventory.crystals,
     },
     purchased: true,
   };
