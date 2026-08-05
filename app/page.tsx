@@ -20,13 +20,41 @@ type Phase =
 
 type PartnerId = "leaf" | "metal" | "tide";
 type PetArtId = PartnerId | "wild" | "bird" | "guardian";
+type PetSpeciesId = PetArtId;
 type RouteEncounterId = "wild" | "bird";
 type CharacterVariant = "player" | "keeper" | "noah" | "jingjing" | "sergi" | "angela";
 type Position = { x: number; y: number };
 type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
 type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
-type SaveData = { phase: Phase; playerName: string; partnerId: PartnerId | null; captured: boolean };
+type CollectionView = "bag" | "dex";
+type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit";
+type PetStats = { hp: number; attack: number; defense: number; spirit: number; speed: number };
+type PetSkill = { name: string; level: number; element: PetElement; power: number | null; description: string };
+type PetSpecies = {
+  id: PetSpeciesId;
+  number: number;
+  name: string;
+  element: PetElement;
+  elementLabel: string;
+  category: string;
+  role: string;
+  habitat: string;
+  rarity: "常见" | "少见" | "珍稀" | "传说";
+  defaultLevel: number;
+  description: string;
+  stats: PetStats;
+  skills: PetSkill[];
+};
+type SaveData = {
+  phase: Phase;
+  playerName: string;
+  partnerId: PartnerId | null;
+  captured: boolean;
+  capturedPetId?: RouteEncounterId;
+  ownedPetIds?: PetSpeciesId[];
+  seenPetIds?: PetSpeciesId[];
+};
 
 type Partner = {
   id: PartnerId;
@@ -131,6 +159,142 @@ const PET_ART: Record<PetArtId, string> = {
   bird: "./pixel/pet-bird.png?v=2",
   guardian: "./pixel/pet-guardian.png?v=2",
 };
+
+const PET_SPECIES_ORDER: PetSpeciesId[] = ["leaf", "metal", "tide", "wild", "bird", "guardian"];
+
+const PET_SPECIES: Record<PetSpeciesId, PetSpecies> = {
+  leaf: {
+    id: "leaf",
+    number: 1,
+    name: "叶团子",
+    element: "plant",
+    elementLabel: "植物系",
+    category: "新芽宠物",
+    role: "守护 · 回复",
+    habitat: "临虹村果园与温暖林地",
+    rarity: "少见",
+    defaultLevel: 5,
+    description: "会把积攒的阳光藏进头顶嫩叶。胆子虽小，却会在伙伴受伤时第一个挡在前面。",
+    stats: { hp: 66, attack: 42, defense: 54, spirit: 67, speed: 36 },
+    skills: [
+      { name: "芽叶拍击", level: 1, element: "plant", power: 38, description: "以卷起的嫩叶连续拍击目标。" },
+      { name: "新芽守护", level: 4, element: "plant", power: null, description: "恢复少量体力，并提高一回合防御。" },
+      { name: "藤蔓牵引", level: 9, element: "plant", power: 58, description: "从地面唤出藤蔓，较低概率降低速度。" },
+    ],
+  },
+  metal: {
+    id: "metal",
+    number: 2,
+    name: "铆钉狐",
+    element: "metal",
+    elementLabel: "金属系",
+    category: "铆甲宠物",
+    role: "强攻 · 反击",
+    habitat: "彩虹城旧工坊与矿石仓",
+    rarity: "少见",
+    defaultLevel: 5,
+    description: "尾巴上的铆片会随情绪开合。认定训练师后，会把每一次挑衅都当成守护伙伴的挑战。",
+    stats: { hp: 58, attack: 69, defense: 72, spirit: 38, speed: 48 },
+    skills: [
+      { name: "银尾突进", level: 1, element: "metal", power: 44, description: "用硬化尾甲高速冲撞目标。" },
+      { name: "反光甲片", level: 4, element: "metal", power: null, description: "展开甲片，本回合受到的伤害减半。" },
+      { name: "铆钉连射", level: 10, element: "metal", power: 62, description: "射出两轮金属碎片，擅长击破护盾。" },
+    ],
+  },
+  tide: {
+    id: "tide",
+    number: 3,
+    name: "潮尾獭",
+    element: "water",
+    elementLabel: "海洋系",
+    category: "潮汐宠物",
+    role: "均衡 · 控场",
+    habitat: "青崖水道与彩虹城水渠",
+    rarity: "少见",
+    defaultLevel: 5,
+    description: "能用尾巴感知水流的细微变化。喜欢恶作剧，却从不把伙伴遗失的东西留在水底。",
+    stats: { hp: 62, attack: 55, defense: 46, spirit: 64, speed: 63 },
+    skills: [
+      { name: "潮泡连弹", level: 1, element: "water", power: 40, description: "连续发射压缩水泡攻击目标。" },
+      { name: "清凉水幕", level: 4, element: "water", power: null, description: "清除一种负面状态并恢复少量体力。" },
+      { name: "回流尾击", level: 9, element: "water", power: 60, description: "借回流摆尾攻击，先手时威力提高。" },
+    ],
+  },
+  wild: {
+    id: "wild",
+    number: 4,
+    name: "茸角鼠",
+    element: "beast",
+    elementLabel: "猛兽系",
+    category: "藏果宠物",
+    role: "耐久 · 干扰",
+    habitat: "临虹村外的金色高草",
+    rarity: "常见",
+    defaultLevel: 4,
+    description: "茸角会随季节长出不同形状。它会记住分享食物的人，也会用落叶掩好对方走过的痕迹。",
+    stats: { hp: 71, attack: 48, defense: 57, spirit: 33, speed: 41 },
+    skills: [
+      { name: "角芽冲撞", level: 1, element: "beast", power: 42, description: "低头冲撞，有小概率使目标畏缩。" },
+      { name: "藏果", level: 5, element: "plant", power: null, description: "吃掉藏起的果实，恢复最大体力的四分之一。" },
+      { name: "滚叶突袭", level: 11, element: "beast", power: 64, description: "裹着落叶高速翻滚，防御越高威力越大。" },
+    ],
+  },
+  bird: {
+    id: "bird",
+    number: 5,
+    name: "银羽雀",
+    element: "wind",
+    elementLabel: "飞行系",
+    category: "巡风宠物",
+    role: "高速 · 连击",
+    habitat: "彩虹学院尖塔与青崖上空",
+    rarity: "常见",
+    defaultLevel: 5,
+    description: "银色飞羽能分辨灵契的方向。学院常让它们担任信使，但它们只把信送给真正尊重宠物的人。",
+    stats: { hp: 49, attack: 58, defense: 39, spirit: 52, speed: 78 },
+    skills: [
+      { name: "疾速啄击", level: 1, element: "wind", power: 36, description: "依靠速度发动的先制攻击。" },
+      { name: "回旋风刃", level: 5, element: "wind", power: 52, description: "盘旋后斩出风刃，较容易连续行动。" },
+      { name: "羽光加速", level: 10, element: "wind", power: null, description: "抖落银羽，大幅提高自身速度。" },
+    ],
+  },
+  guardian: {
+    id: "guardian",
+    number: 6,
+    name: "白裂狮",
+    element: "spirit",
+    elementLabel: "灵契系",
+    category: "晶核守卫",
+    role: "首领 · 灵能",
+    habitat: "万灵神殿深层",
+    rarity: "传说",
+    defaultLevel: 18,
+    description: "曾负责守护万灵晶核。灵契断裂后，它仍凭残存的三段记忆守在神殿，等待有人再次呼唤其名。",
+    stats: { hp: 86, attack: 76, defense: 73, spirit: 91, speed: 59 },
+    skills: [
+      { name: "裂痕爪", level: 1, element: "spirit", power: 68, description: "撕开短暂裂隙，对守护效果造成额外伤害。" },
+      { name: "断契咆哮", level: 12, element: "spirit", power: null, description: "扰乱双方灵契，降低目标攻击与灵力。" },
+      { name: "记忆回响", level: 18, element: "spirit", power: 82, description: "记忆越完整，造成的灵契伤害越高。" },
+    ],
+  },
+};
+
+const STARTER_SIGHTINGS: PetSpeciesId[] = ["leaf", "metal", "tide"];
+
+function mergePetIds(...groups: PetSpeciesId[][]) {
+  return Array.from(new Set(groups.flat()));
+}
+
+function isPetSpeciesId(value: unknown): value is PetSpeciesId {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(PET_SPECIES, value);
+}
+
+function storySightingsForPhase(phase: Phase) {
+  const sightings = [...STARTER_SIGHTINGS];
+  if (["exam", "festival", "rupture", "boss", "aftermath", "ending"].includes(phase)) sightings.push("bird");
+  if (["boss", "aftermath", "ending"].includes(phase)) sightings.push("guardian");
+  return sightings;
+}
 
 const CHARACTER_ART: Record<CharacterVariant, string> = {
   player: "./pixel/character-player.png?v=2",
@@ -362,6 +526,124 @@ function Meter({ value, max, kind = "hp" }: { value: number; max: number; kind?:
   );
 }
 
+const PET_STAT_LABELS: Array<{ key: keyof PetStats; label: string }> = [
+  { key: "hp", label: "体力" },
+  { key: "attack", label: "攻击" },
+  { key: "defense", label: "防御" },
+  { key: "spirit", label: "灵力" },
+  { key: "speed", label: "速度" },
+];
+
+function PetCollectionModal({
+  initialView,
+  ownedPetIds,
+  seenPetIds,
+  starterId,
+  onClose,
+}: {
+  initialView: CollectionView;
+  ownedPetIds: PetSpeciesId[];
+  seenPetIds: PetSpeciesId[];
+  starterId: PartnerId | null;
+  onClose: () => void;
+}) {
+  const initialSelection = initialView === "bag" ? ownedPetIds[0] ?? starterId ?? "leaf" : starterId ?? PET_SPECIES_ORDER[0];
+  const [view, setView] = useState<CollectionView>(initialView);
+  const [selectedId, setSelectedId] = useState<PetSpeciesId>(initialSelection);
+  const owned = useMemo(() => new Set(ownedPetIds), [ownedPetIds]);
+  const seen = useMemo(() => new Set(seenPetIds), [seenPetIds]);
+  const selected = PET_SPECIES[selectedId];
+  const selectedKnown = owned.has(selectedId) || seen.has(selectedId);
+  const list = view === "bag" ? ownedPetIds : PET_SPECIES_ORDER;
+
+  const changeView = (next: CollectionView) => {
+    setView(next);
+    if (next === "bag" && !owned.has(selectedId)) setSelectedId(ownedPetIds[0] ?? starterId ?? "leaf");
+  };
+
+  return (
+    <div className="modal-backdrop collection-backdrop" onClick={onClose}>
+      <section className="collection-modal" onClick={(event) => event.stopPropagation()} aria-label={view === "bag" ? "宠物背包" : "宠物图鉴"}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
+        <header className="collection-header">
+          <div><small>SPIRIT ARCHIVE</small><h2>{view === "bag" ? "宠物背包" : "宠物图鉴"}</h2></div>
+          <div className="collection-progress">
+            <span>{view === "bag" ? "同行席位" : "已发现"}</span>
+            <b>{view === "bag" ? `${ownedPetIds.length} / 6` : `${seen.size} / ${PET_SPECIES_ORDER.length}`}</b>
+          </div>
+        </header>
+
+        <nav className="collection-tabs" aria-label="宠物资料分类">
+          <button type="button" className={view === "bag" ? "active" : ""} onClick={() => changeView("bag")}><i>包</i><span>宠物背包<small>同行伙伴</small></span></button>
+          <button type="button" className={view === "dex" ? "active" : ""} onClick={() => changeView("dex")}><i>鉴</i><span>宠物图鉴<small>发现记录</small></span></button>
+        </nav>
+
+        <div className="collection-content">
+          <div className={`pet-entry-list ${view === "dex" ? "dex-grid" : "bag-list"}`}>
+            {list.length === 0 && <div className="empty-pet-bag"><b>背包还是空的</b><p>选择第一位伙伴后，宠物资料会出现在这里。</p></div>}
+            {list.map((id, index) => {
+              const species = PET_SPECIES[id];
+              const isOwned = owned.has(id);
+              const isSeen = seen.has(id) || isOwned;
+              const state = isOwned ? (id === starterId ? "出战" : "同行") : isSeen ? "发现" : "未知";
+              return (
+                <button
+                  type="button"
+                  key={id}
+                  className={`pet-entry element-${species.element}${selectedId === id ? " selected" : ""}${isSeen ? "" : " undiscovered"}`}
+                  onClick={() => setSelectedId(id)}
+                  aria-label={`${String(species.number).padStart(3, "0")} ${isSeen ? species.name : "未记录"}`}
+                >
+                  <span className="pet-entry-number">No.{String(species.number).padStart(3, "0")}</span>
+                  <div className="pet-entry-sprite"><PetSprite id={id} size={view === "bag" ? "md" : "sm"} /></div>
+                  <span className="pet-entry-copy"><b>{isSeen ? species.name : "未记录"}</b><small>{isSeen ? species.elementLabel : "???"}</small></span>
+                  <em>{view === "bag" ? `Lv.${species.defaultLevel}` : state}</em>
+                  {view === "bag" && <i className="party-slot">{String(index + 1).padStart(2, "0")}</i>}
+                </button>
+              );
+            })}
+          </div>
+
+          <article className={`pet-detail-card element-${selected.element}${selectedKnown ? "" : " detail-locked"}`}>
+            {!selectedKnown ? (
+              <div className="locked-pet-detail">
+                <span>No.{String(selected.number).padStart(3, "0")}</span>
+                <div><PetSprite id={selected.id} size="xl" /></div>
+                <h3>尚未发现</h3>
+                <p>图鉴只留下了一条栖息线索：{selected.habitat}。</p>
+              </div>
+            ) : (
+              <>
+                <div className="pet-detail-hero">
+                  <div className="pet-detail-sprite"><PetSprite id={selected.id} size="xl" /><span>Lv.{selected.defaultLevel}</span></div>
+                  <div className="pet-detail-title">
+                    <small>No.{String(selected.number).padStart(3, "0")} · {selected.category}</small>
+                    <h3>{selected.name}</h3>
+                    <div><span>{selected.elementLabel}</span><span>{selected.rarity}</span><span>{selected.role}</span></div>
+                  </div>
+                </div>
+                <p className="pet-description">{selected.description}</p>
+                <div className="pet-habitat"><span>主要栖息地</span><b>{selected.habitat}</b></div>
+                <div className="pet-detail-columns">
+                  <section className="pet-stat-panel">
+                    <h4>基础能力</h4>
+                    {PET_STAT_LABELS.map(({ key, label }) => <div className="pet-stat-row" key={key}><span>{label}</span><i><b style={{ width: `${selected.stats[key]}%` }} /></i><em>{selected.stats[key]}</em></div>)}
+                    <small>基础能力上限为 100，实际数值会随等级成长。</small>
+                  </section>
+                  <section className="pet-skill-panel">
+                    <h4>技能记录</h4>
+                    {selected.skills.map((skill) => <div className={`pet-skill element-${skill.element}`} key={skill.name}><span><i>Lv.{skill.level}</i><b>{skill.name}</b><em>{skill.power === null ? "变化" : `威力 ${skill.power}`}</em></span><p>{skill.description}</p></div>)}
+                  </section>
+                </div>
+              </>
+            )}
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function battleActorClass(side: Exclude<BattleSide, "trainer">, fx: BattleFx | null) {
   const classes = ["battle-pet", `${side}-pet`];
   if (!fx) return classes.join(" ");
@@ -552,6 +834,9 @@ export default function Home() {
   const [captured, setCaptured] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
+  const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
+  const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
   const [battleFx, setBattleFx] = useState<BattleFx | null>(null);
   const [battleBusy, setBattleBusy] = useState(false);
@@ -634,9 +919,17 @@ export default function Home() {
 
   useEffect(() => {
     if (phase === "title" || phase === "name") return;
-    const save: SaveData = { phase, playerName, partnerId, captured };
+    const save: SaveData = {
+      phase,
+      playerName,
+      partnerId,
+      captured,
+      capturedPetId: captured ? routeEncounterId : undefined,
+      ownedPetIds,
+      seenPetIds,
+    };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [captured, partnerId, phase, playerName]);
+  }, [captured, ownedPetIds, partnerId, phase, playerName, routeEncounterId, seenPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -716,14 +1009,21 @@ export default function Home() {
     setToast(map.missionText);
   }, []);
 
+  const registerPetSightings = useCallback((ids: PetSpeciesId[]) => {
+    setSeenPetIds((current) => mergePetIds(current, ids));
+  }, []);
+
   const go = useCallback((next: Phase) => {
     playTone(next === "rupture" || next === "boss" ? 170 : 520);
     prepareExplorationMap(next);
+    if (next === "shelter") registerPetSightings(STARTER_SIGHTINGS);
+    if (next === "exam") registerPetSightings(["bird"]);
+    if (next === "boss") registerPetSightings(["guardian"]);
     if (next === "city") setCityDialogueOpen(false);
     if (next === "festival") setFestivalDialogueOpen(false);
     if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
-  }, [playTone, prepareExplorationMap]);
+  }, [playTone, prepareExplorationMap, registerPetSightings]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -731,6 +1031,9 @@ export default function Home() {
     setDraftName("小澈");
     setPartnerId(null);
     setCaptured(false);
+    setCollectionView(null);
+    setOwnedPetIds([]);
+    setSeenPetIds([]);
     setBattleFx(null);
     setBattleBusy(false);
     setRoadPos(ROAD_START);
@@ -769,12 +1072,29 @@ export default function Home() {
       const raw = window.localStorage.getItem(SAVE_KEY);
       if (!raw) return newGame();
       const saved = JSON.parse(raw) as SaveData;
+      const restoredPartnerId = saved.partnerId && saved.partnerId in PARTNERS ? saved.partnerId : null;
+      const restoredCapturedId: RouteEncounterId | null = saved.captured
+        ? saved.capturedPetId === "bird" ? "bird" : "wild"
+        : null;
+      const restoredOwned = mergePetIds(
+        (saved.ownedPetIds ?? []).filter(isPetSpeciesId),
+        restoredPartnerId ? [restoredPartnerId] : [],
+        restoredCapturedId ? [restoredCapturedId] : [],
+      );
+      const restoredPhase = saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase;
+      const restoredSeen = mergePetIds(
+        storySightingsForPhase(restoredPhase),
+        (saved.seenPetIds ?? []).filter(isPetSpeciesId),
+        restoredOwned,
+      );
       setPlayerName(saved.playerName || "小澈");
       setDraftName(saved.playerName || "小澈");
-      setPartnerId(saved.partnerId);
-      setExamHp(saved.partnerId ? PARTNERS[saved.partnerId].hp : 62);
+      setPartnerId(restoredPartnerId);
+      setExamHp(restoredPartnerId ? PARTNERS[restoredPartnerId].hp : 62);
       setCaptured(Boolean(saved.captured));
-      const restoredPhase = saved.phase === "title" || saved.phase === "name" ? "shelter" : saved.phase;
+      setRouteEncounterId(restoredCapturedId ?? "wild");
+      setOwnedPetIds(restoredOwned);
+      setSeenPetIds(restoredSeen);
       prepareExplorationMap(restoredPhase);
       setPhase(restoredPhase);
     } catch {
@@ -784,6 +1104,8 @@ export default function Home() {
 
   const selectPartner = (id: PartnerId) => {
     setPartnerId(id);
+    setOwnedPetIds([id]);
+    registerPetSightings(STARTER_SIGHTINGS);
     setExamHp(PARTNERS[id].hp);
     playTone(id === "leaf" ? 480 : id === "metal" ? 330 : 580);
   };
@@ -799,6 +1121,7 @@ export default function Home() {
 
   const beginRouteEncounter = useCallback((id: RouteEncounterId) => {
     const encounter = ROUTE_ENCOUNTERS[id];
+    registerPetSightings([id]);
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
     setWildCalm(0);
@@ -808,10 +1131,10 @@ export default function Home() {
     setToast(`野生的${encounter.name}出现了！`);
     setEncounterPending(true);
     playTone(210);
-  }, [playTone]);
+  }, [playTone, registerPetSightings]);
 
   const moveRoad = useCallback((dx: number, dy: number) => {
-    if (encounterPending || !activeMap || !mapAssetReady) return;
+    if (encounterPending || !activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
     else if (dy !== 0) setRoadFacing(dy < 0 ? "up" : "down");
 
@@ -852,10 +1175,10 @@ export default function Home() {
       grassStepsRef.current = 0;
       beginRouteEncounter(Math.random() < 0.28 ? "bird" : "wild");
     }
-  }, [activeMap, beginRouteEncounter, captured, encounterPending, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
+  }, [activeMap, beginRouteEncounter, captured, collectionView, encounterPending, helpOpen, mapAssetReady, phase, playTone, roadPos, triggerRoadMotion]);
 
   const exploreInteraction = useCallback(() => {
-    if (!activeMap || !mapAssetReady) return;
+    if (!activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
     if (phase === "road" && distance(roadPos, activeMap.interaction) < 8) {
       if (!captured) {
         setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
@@ -901,7 +1224,7 @@ export default function Home() {
     if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
-  }, [activeMap, captured, go, mapAssetReady, phase, playTone, roadPos, ruptureNodes]);
+  }, [activeMap, captured, collectionView, go, helpOpen, mapAssetReady, phase, playTone, roadPos, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -959,6 +1282,8 @@ export default function Home() {
         if (success) {
           setCaptured(true);
           setCaptureWon(true);
+          setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]));
+          registerPetSightings([routeEncounter.id]);
         }
       });
       setCaptureLog(success ? `胶囊没有强行关闭。${routeEncounter.name}主动触碰按钮，接受了你的邀请。` : wildHp > captureThreshold ? `${routeEncounter.name}还有力气挣脱。先让它停下来。` : "它的体力已经很低，但仍不信任你。试着安抚它。");
@@ -1080,8 +1405,10 @@ export default function Home() {
           <div className="chapter-label"><span />{chapterLabel}</div>
           <div className="hud-actions">
             {partner && <div className="partner-chip"><PetSprite id={partner.id} size="sm" /><span><small>{partner.kind}</small><b>{partner.name}</b></span></div>}
+            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("bag"); }} aria-label="打开宠物背包"><b>包</b><small>{ownedPetIds.length}/6</small></button>}
+            {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("dex"); }} aria-label="打开宠物图鉴"><b>鉴</b><small>{seenPetIds.length}/{PET_SPECIES_ORDER.length}</small></button>}
             <button type="button" className="icon-button" onClick={() => setSoundOn((value) => !value)} aria-label={soundOn ? "关闭音效" : "开启音效"}>{soundOn ? "♪" : "×"}</button>
-            <button type="button" className="icon-button" onClick={() => setHelpOpen(true)} aria-label="打开帮助">?</button>
+            <button type="button" className="icon-button" onClick={() => { setCollectionView(null); setHelpOpen(true); }} aria-label="打开帮助">?</button>
           </div>
         </header>
       )}
@@ -1301,13 +1628,23 @@ export default function Home() {
             <div className="ending-record">
               <div><small>训练师</small><b>{playerName}</b></div>
               <div><small>初始伙伴</small><b>{partner.name}</b></div>
-              <div><small>图鉴记录</small><b>{captured ? "2" : "1"} / 100</b></div>
+              <div><small>图鉴记录</small><b>{seenPetIds.length} / {PET_SPECIES_ORDER.length}</b></div>
               <div><small>下一目标</small><b>东之高原</b></div>
             </div>
             <div className="next-chapter"><span>第一章</span><div><b>不愿回家的宠物</b><small>TO BE CONTINUED</small></div></div>
             <div className="ending-actions"><button type="button" className="primary-action dark" onClick={() => setPhase("title")}><span>保存并返回标题</span><b>›</b></button><button type="button" className="text-action" onClick={newGame}>重新体验序章</button></div>
           </div>
         </section>
+      )}
+
+      {collectionView && partner && (
+        <PetCollectionModal
+          initialView={collectionView}
+          ownedPetIds={ownedPetIds}
+          seenPetIds={seenPetIds}
+          starterId={partnerId}
+          onClose={() => setCollectionView(null)}
+        />
       )}
 
       {helpOpen && (
