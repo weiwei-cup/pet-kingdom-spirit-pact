@@ -7,6 +7,7 @@ import { COLLISION_MASK_BITS, COLLISION_MASK_SIZE } from "./collision-mask-data"
 type Phase =
   | "title"
   | "name"
+  | "home"
   | "shelter"
   | "road"
   | "capture"
@@ -28,6 +29,8 @@ type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
 type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
 type CollectionView = "bag" | "dex";
+type HomeDiscovery = "photo" | "letter" | "breakfast";
+type HomeStoryId = "wake" | HomeDiscovery | "door";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit";
 type PetStats = { hp: number; attack: number; defense: number; spirit: number; speed: number };
 type PetSkill = { name: string; level: number; element: PetElement; power: number | null; description: string };
@@ -57,6 +60,7 @@ type SaveData = {
   seenPetIds?: PetSpeciesId[];
   activePetId?: PetSpeciesId;
   petProgress?: PetProgress[];
+  homeDiscoveries?: HomeDiscovery[];
 };
 
 type Partner = {
@@ -378,7 +382,8 @@ const MAP_PLAYER_ART = "./pixel/player-walk-atlas.webp?v=3";
 
 const SCENE_ART: Record<Phase, string> = {
   title: "./pixel/title-landscape.webp?v=2",
-  name: "./pixel/shelter-interior.webp?v=2",
+  name: "./pixel/protagonist-home-v1.webp?v=1",
+  home: "./pixel/protagonist-home-v1.webp?v=1",
   shelter: "./pixel/shelter-interior.webp?v=2",
   road: "./pixel/route-map-v2.webp?v=3",
   capture: "./pixel/route-map-v2.webp?v=3",
@@ -432,9 +437,26 @@ const ROUTE_ENCOUNTERS: Record<RouteEncounterId, RouteEncounter> = {
 };
 
 const MAP_PIXEL_SIZE = { width: 1536, height: 1024 };
+const HOME_PIXEL_SIZE = { width: 1672, height: 941 };
 const ROAD_STEP = { x: 100 / 48, y: 100 / 32 };
 const ROAD_START: Position = { x: 16.7, y: 84.4 };
 const CITY_GATE: Position = { x: 84.5, y: 15.5 };
+const HOME_START: Position = { x: 42, y: 49 };
+const HOME_STEP = { x: 2.15, y: 3.3 };
+
+const HOME_INTERACTIONS: Record<HomeDiscovery, { position: Position; marker: Position; label: string; hint: string }> = {
+  photo: { position: { x: 55, y: 34 }, marker: { x: 56, y: 22 }, label: "褪色合影", hint: "墙上那张合影似乎被人重新摆正过。" },
+  letter: { position: { x: 67, y: 43 }, marker: { x: 69, y: 28 }, label: "学院推荐信", hint: "书桌上的推荐信墨迹未干。" },
+  breakfast: { position: { x: 59, y: 59 }, marker: { x: 70, y: 58 }, label: "早餐与便笺", hint: "餐桌上留着一份早餐和母亲的字条。" },
+};
+
+const HOME_OBSTACLES: MapRect[] = [
+  { x1: 13, y1: 28, x2: 33, y2: 48 },
+  { x1: 12, y1: 48, x2: 22, y2: 78 },
+  { x1: 62, y1: 26, x2: 79, y2: 42 },
+  { x1: 78, y1: 34, x2: 86, y2: 77 },
+  { x1: 62, y1: 49, x2: 80, y2: 75 },
+];
 
 const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
   road: {
@@ -495,7 +517,8 @@ const EXPLORATION_MAPS: Record<ExplorationPhase, ExplorationMapDefinition> = {
 };
 
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
-  name: [SCENE_ART.road],
+  name: [SCENE_ART.home],
+  home: [SCENE_ART.shelter],
   shelter: [SCENE_ART.road],
   road: [SCENE_ART.city],
   capture: [SCENE_ART.city],
@@ -547,6 +570,45 @@ function isGrassTile(map: ExplorationMapDefinition, position: Position) {
 
 function distance(a: Position, b: Position) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function isHomeWalkable(position: Position) {
+  const inMainFloor = position.x >= 14 && position.x <= 85 && position.y >= 30 && position.y <= 78;
+  const inDoorCorridor = position.x >= 43 && position.x <= 57 && position.y >= 76 && position.y <= 87;
+  return (inMainFloor || inDoorCorridor) && !HOME_OBSTACLES.some((rect) => inMapRect(position, rect));
+}
+
+function homeStoryLines(story: HomeStoryId, playerName: string): DialogueLine[] {
+  if (story === "wake") return [
+    { speaker: "旁白", text: "临虹村的晨钟敲了七下。推荐信上的墨迹还没有干，窗外已经有人带着宠物赶往黄金庆典。" },
+    { speaker: playerName, text: "今天就要去黎叔那里了……先把该带的东西收好，也跟家里好好道个别。" },
+  ];
+  if (story === "photo") return [
+    { speaker: "旁白", text: "褪色的合影里，年轻时的母亲和黎叔站在彩虹学院门前。画面边缘还有一只白色宠物，却没有留下名字。" },
+    { speaker: playerName, text: "这张照片以前一直收在箱底。母亲为什么偏偏在今天把它挂出来？" },
+  ];
+  if (story === "letter") return [
+    { speaker: "旁白", text: `推荐信写着：“兹推荐临虹村居民${playerName}参加彩虹学院新生考核。”纸角还有黎叔添上的一行小字。` },
+    { speaker: "黎叔的字迹", text: "真正的契约从来不是让宠物服从，而是让彼此都愿意回头。", tone: "soft" },
+  ];
+  if (story === "breakfast") return [
+    { speaker: "母亲的便笺", text: "面包要趁热吃。到了照护所，别急着挑最强的那只——看看谁愿意先走向你。" },
+    { speaker: "母亲的便笺", text: "无论谁跟你回来，家里都已经给它留好了一只碗。晚上记得把你们的故事讲给我听。", tone: "soft" },
+  ];
+  return [
+    { speaker: playerName, text: "推荐信、围巾，还有母亲的便笺……都带齐了。" },
+    { speaker: "母亲", role: "从屋外传来", text: `${playerName}，黎叔已经在等你了。去吧，别让你的第一位伙伴等太久。`, tone: "soft" },
+    { speaker: playerName, text: "我出发了！" },
+  ];
+}
+
+function shelterIntroLines(playerName: string): DialogueLine[] {
+  return [
+    { speaker: "黎叔", role: "临虹村照护员", text: `${playerName}，你母亲刚派人捎过话。看来你已经把家里的那张旧照片看见了。` },
+    { speaker: playerName, text: "照片里的白色宠物是谁？为什么它的名字被裁掉了？" },
+    { speaker: "黎叔", text: "等你真正拥有愿意并肩同行的伙伴，我会把知道的都告诉你。现在，先别看封印球。" },
+    { speaker: "黎叔", text: "这三个小家伙等了你一早。今天不是你单方面挑选它们——你们要互相选择。", tone: "soft" },
+  ];
 }
 
 function wait(milliseconds: number) {
@@ -826,6 +888,69 @@ function DPad({ disabled, onMove, onInteract }: { disabled?: boolean; onMove: (d
   );
 }
 
+function HomeScene({
+  mapCamera,
+  fieldViewportRef,
+  playerName,
+  position,
+  facing,
+  moving,
+  step,
+  bumped,
+  discoveries,
+  toast,
+  onMove,
+  onInteract,
+}: {
+  mapCamera: { width: number; height: number; x: number; y: number };
+  fieldViewportRef: React.RefObject<HTMLDivElement | null>;
+  playerName: string;
+  position: Position;
+  facing: RoadFacing;
+  moving: boolean;
+  step: number;
+  bumped: boolean;
+  discoveries: HomeDiscovery[];
+  toast: string;
+  onMove: (dx: number, dy: number) => void;
+  onInteract: () => void;
+}) {
+  const readyToLeave = discoveries.length === Object.keys(HOME_INTERACTIONS).length;
+  return (
+    <section className="home-screen">
+      <div className="mission-card home-mission-card">
+        <small>临虹村 · {playerName}的家</small>
+        <h3>离家之前</h3>
+        <p>收好重要的东西，也看看家人今天特意留下了什么。</p>
+        <div className="mission-items">
+          {(Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>).map(([id, item]) => <span key={id} className={discoveries.includes(id) ? "done" : ""}>◇ {item.label}</span>)}
+          <span className={readyToLeave ? "ready" : ""}>◇ 从正门前往照护所</span>
+        </div>
+      </div>
+      <div className="home-world" ref={fieldViewportRef} aria-label={`${playerName}的家，可探索室内地图`}>
+        <div className="home-map-stage" style={{ width: `${mapCamera.width}px`, height: `${mapCamera.height}px`, transform: `translate3d(${mapCamera.x}px, ${mapCamera.y}px, 0)` }}>
+          <img src={SCENE_ART.home} alt={`${playerName}的家`} draggable={false} />
+          {(Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>).map(([id, item]) => (
+            <button type="button" key={id} className={`home-hotspot${discoveries.includes(id) ? " discovered" : ""}`} style={{ left: `${item.marker.x}%`, top: `${item.marker.y}%` }} onClick={onInteract} aria-label={item.label}>
+              <i>{discoveries.includes(id) ? "✓" : "!"}</i><span>{item.label}</span>
+            </button>
+          ))}
+          <button type="button" className={`home-hotspot home-door-hotspot${readyToLeave ? " ready" : ""}`} style={{ left: "50%", top: "84%" }} onClick={onInteract} aria-label="前往照护所">
+            <i>{readyToLeave ? "→" : "×"}</i><span>{readyToLeave ? "前往照护所" : "离家前再看看"}</span>
+          </button>
+          <div className={`map-player home-player facing-${facing}${moving ? " is-walking" : ""}${bumped ? " is-bumping" : ""}`} style={{ left: `${position.x}%`, top: `${position.y}%` }}>
+            <i className="map-player-shadow" aria-hidden="true" />
+            <MapPlayerSprite facing={facing} moving={moving} step={step} />
+          </div>
+        </div>
+      </div>
+      <div className="field-toast home-toast"><span>家</span><p>{toast}</p><kbd>E</kbd></div>
+      <DPad onMove={onMove} onInteract={onInteract} />
+      <span className="map-control-hint">WASD / 方向键移动 · E 调查</span>
+    </section>
+  );
+}
+
 function ExplorationScene({
   map,
   mapCamera,
@@ -940,6 +1065,15 @@ export default function Home() {
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
   const [activePetId, setActivePetId] = useState<PetSpeciesId | null>(null);
   const [petProgress, setPetProgress] = useState<PetProgress[]>([]);
+  const [homePos, setHomePos] = useState<Position>(HOME_START);
+  const [homeFacing, setHomeFacing] = useState<RoadFacing>("down");
+  const [homeMoving, setHomeMoving] = useState(false);
+  const [homeStep, setHomeStep] = useState(0);
+  const [homeBumped, setHomeBumped] = useState(false);
+  const [homeDiscoveries, setHomeDiscoveries] = useState<HomeDiscovery[]>([]);
+  const [homeStory, setHomeStory] = useState<HomeStoryId | null>(null);
+  const [homeToast, setHomeToast] = useState("先看看书桌上的推荐信。");
+  const [shelterIntroOpen, setShelterIntroOpen] = useState(false);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
   const [battleFx, setBattleFx] = useState<BattleFx | null>(null);
   const [battleBusy, setBattleBusy] = useState(false);
@@ -960,6 +1094,8 @@ export default function Home() {
   const grassStepsRef = useRef(0);
   const roadStopTimer = useRef<number | null>(null);
   const roadBumpTimer = useRef<number | null>(null);
+  const homeStopTimer = useRef<number | null>(null);
+  const homeBumpTimer = useRef<number | null>(null);
   const [berry, setBerry] = useState(true);
   const [wildHp, setWildHp] = useState(32);
   const [wildCalm, setWildCalm] = useState(0);
@@ -1023,6 +1159,20 @@ export default function Home() {
     };
   }, [fieldSize, roadPos]);
 
+  const homeCamera = useMemo(() => {
+    const scale = Math.max(fieldSize.width / HOME_PIXEL_SIZE.width, fieldSize.height / HOME_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.7 : 0.82);
+    const width = HOME_PIXEL_SIZE.width * scale;
+    const height = HOME_PIXEL_SIZE.height * scale;
+    const playerX = (homePos.x / 100) * width;
+    const playerY = (homePos.y / 100) * height;
+    return {
+      width,
+      height,
+      x: Math.min(0, Math.max(fieldSize.width - width, fieldSize.width / 2 - playerX)),
+      y: Math.min(0, Math.max(fieldSize.height - height, fieldSize.height / 2 - playerY)),
+    };
+  }, [fieldSize, homePos]);
+
   useEffect(() => {
     let hasSavedGame = false;
     try {
@@ -1051,9 +1201,10 @@ export default function Home() {
       seenPetIds,
       activePetId: activePetId ?? undefined,
       petProgress,
+      homeDiscoveries,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [activePetId, captured, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
+  }, [activePetId, captured, homeDiscoveries, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -1068,10 +1219,12 @@ export default function Home() {
   useEffect(() => () => {
     if (roadStopTimer.current !== null) window.clearTimeout(roadStopTimer.current);
     if (roadBumpTimer.current !== null) window.clearTimeout(roadBumpTimer.current);
+    if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
+    if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
   }, []);
 
   useEffect(() => {
-    if (!activeMap || !fieldViewportRef.current) return;
+    if ((!activeMap && phase !== "home") || !fieldViewportRef.current) return;
     const viewport = fieldViewportRef.current;
     const updateSize = () => setFieldSize({ width: viewport.clientWidth, height: viewport.clientHeight });
     updateSize();
@@ -1166,6 +1319,15 @@ export default function Home() {
     setSeenPetIds([]);
     setActivePetId(null);
     setPetProgress([]);
+    setHomePos(HOME_START);
+    setHomeFacing("down");
+    setHomeMoving(false);
+    setHomeStep(0);
+    setHomeBumped(false);
+    setHomeDiscoveries([]);
+    setHomeStory(null);
+    setHomeToast("先看看书桌上的推荐信。");
+    setShelterIntroOpen(false);
     setBattleFx(null);
     setBattleBusy(false);
     setRoadPos(ROAD_START);
@@ -1234,6 +1396,13 @@ export default function Home() {
       setSeenPetIds(restoredSeen);
       setActivePetId(restoredActivePetId);
       setPetProgress(restoredProgress);
+      const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
+      setHomePos(HOME_START);
+      setHomeFacing("down");
+      setHomeDiscoveries(restoredHomeDiscoveries);
+      setHomeStory(null);
+      setHomeToast(restoredHomeDiscoveries.length === 3 ? "东西都收好了。到正门按 E 前往照护所。" : "离家前，再看看房间里发光的地方。");
+      setShelterIntroOpen(false);
       if (restoredActivePetId) {
         const restoredActiveProgress = restoredProgress.find((entry) => entry.id === restoredActivePetId) ?? createPetProgress(restoredActivePetId);
         const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level).hp;
@@ -1290,6 +1459,75 @@ export default function Home() {
     }));
     playTone(740);
   }, [playTone]);
+
+  const moveHome = useCallback((dx: number, dy: number) => {
+    if (phase !== "home" || homeStory !== null || collectionView !== null || helpOpen) return;
+    const nextFacing: RoadFacing = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
+    setHomeFacing(nextFacing);
+    const next = {
+      x: homePos.x + Math.sign(dx) * HOME_STEP.x,
+      y: homePos.y + Math.sign(dy) * HOME_STEP.y,
+    };
+    if (!isHomeWalkable(next)) {
+      setHomeMoving(false);
+      setHomeBumped(true);
+      setHomeToast("家具挡住了这边，从中央木地板绕过去吧。");
+      playTone(115);
+      if (homeBumpTimer.current !== null) window.clearTimeout(homeBumpTimer.current);
+      homeBumpTimer.current = window.setTimeout(() => setHomeBumped(false), 190);
+      return;
+    }
+    setHomeMoving(true);
+    setHomeStep((value) => value + 1);
+    setHomePos(next);
+    if (homeStopTimer.current !== null) window.clearTimeout(homeStopTimer.current);
+    homeStopTimer.current = window.setTimeout(() => setHomeMoving(false), 195);
+    const nearby = (Object.values(HOME_INTERACTIONS) as Array<(typeof HOME_INTERACTIONS)[HomeDiscovery]>).find((item) => distance(next, item.position) < 8);
+    if (nearby) setHomeToast(`${nearby.hint} 靠近后按 E 调查。`);
+    else if (distance(next, { x: 50, y: 84 }) < 9) setHomeToast(homeDiscoveries.length === 3 ? "东西已经收好，按 E 出发。" : "似乎还有东西没有确认。看看发光的地方。可按 E 调查。" );
+  }, [collectionView, helpOpen, homeDiscoveries.length, homePos, homeStory, phase, playTone]);
+
+  const interactHome = useCallback(() => {
+    if (phase !== "home" || homeStory !== null || collectionView !== null || helpOpen) return;
+    if (distance(homePos, { x: 50, y: 84 }) < 9) {
+      if (homeDiscoveries.length < 3) {
+        setHomeToast(`还有 ${3 - homeDiscoveries.length} 处重要的东西没有确认。`);
+        playTone(145);
+        return;
+      }
+      setHomeStory("door");
+      playTone(680);
+      return;
+    }
+    const nearby = (Object.entries(HOME_INTERACTIONS) as Array<[HomeDiscovery, (typeof HOME_INTERACTIONS)[HomeDiscovery]]>)
+      .find(([, item]) => distance(homePos, item.position) < 9);
+    if (nearby) {
+      setHomeStory(nearby[0]);
+      playTone(homeDiscoveries.includes(nearby[0]) ? 520 : 640);
+      return;
+    }
+    setHomeToast("这里没有需要带走的东西。靠近发光标记后按 E 调查。");
+  }, [collectionView, helpOpen, homeDiscoveries, homePos, homeStory, phase, playTone]);
+
+  const completeHomeStory = useCallback(() => {
+    if (!homeStory) return;
+    if (homeStory === "door") {
+      setHomeStory(null);
+      setShelterIntroOpen(true);
+      go("shelter");
+      return;
+    }
+    if (homeStory === "wake") {
+      setHomeStory(null);
+      setHomeToast("调查旧合影、推荐信和餐桌上的便笺。");
+      return;
+    }
+    const discovery = homeStory;
+    const next = homeDiscoveries.includes(discovery) ? homeDiscoveries : [...homeDiscoveries, discovery];
+    setHomeDiscoveries(next);
+    setHomeStory(null);
+    setHomeToast(next.length === 3 ? "重要的东西都确认过了。到正门按 E 前往照护所。" : `记住了这段线索。还剩 ${3 - next.length} 处。`);
+  }, [go, homeDiscoveries, homeStory]);
 
   const triggerRoadMotion = useCallback((dx: number, dy: number, duration: number) => {
     if (Math.abs(dx) > Math.abs(dy)) setRoadFacing(dx < 0 ? "left" : "right");
@@ -1430,6 +1668,21 @@ export default function Home() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [activeMap, exploreInteraction, moveRoad]);
+
+  useEffect(() => {
+    if (phase !== "home") return;
+    const handler = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", "e"].includes(key)) event.preventDefault();
+      if (key === "arrowup" || key === "w") moveHome(0, -1);
+      if (key === "arrowdown" || key === "s") moveHome(0, 1);
+      if (key === "arrowleft" || key === "a") moveHome(-1, 0);
+      if (key === "arrowright" || key === "d") moveHome(1, 0);
+      if (key === "e") interactHome();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [interactHome, moveHome, phase]);
 
   const captureAction = async (action: "attack" | "calm" | "ball") => {
     if (captureWon || battleBusy || !partner) return;
@@ -1584,7 +1837,7 @@ export default function Home() {
   };
 
   const chapterLabel = useMemo(() => {
-    if (["title", "name", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
+    if (["title", "name", "home", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
     if (["city", "exam", "festival"].includes(phase)) return "序章 · 黄金庆典";
     if (["rupture", "boss", "aftermath"].includes(phase)) return "序章 · 灵契断裂";
     return "序章 · 没有登记的伙伴";
@@ -1643,10 +1896,31 @@ export default function Home() {
               <span>训练师姓名</span>
               <input value={draftName} maxLength={8} onChange={(event) => setDraftName(event.target.value)} autoFocus aria-label="训练师姓名" />
             </label>
-            <button type="button" className="primary-action dark" disabled={!draftName.trim()} onClick={() => { setPlayerName(draftName.trim()); go("shelter"); }}><span>收好推荐信</span><b>›</b></button>
+            <button type="button" className="primary-action dark" disabled={!draftName.trim()} onClick={() => { setPlayerName(draftName.trim()); setHomeStory("wake"); setHomePos(HOME_START); setHomeDiscoveries([]); go("home"); }}><span>收好推荐信</span><b>›</b></button>
             <div className="seal-stamp">临虹<br />照护所</div>
           </div>
         </section>
+      )}
+
+      {phase === "home" && (
+        <HomeScene
+          mapCamera={homeCamera}
+          fieldViewportRef={fieldViewportRef}
+          playerName={playerName}
+          position={homePos}
+          facing={homeFacing}
+          moving={homeMoving}
+          step={homeStep}
+          bumped={homeBumped}
+          discoveries={homeDiscoveries}
+          toast={homeToast}
+          onMove={moveHome}
+          onInteract={interactHome}
+        />
+      )}
+
+      {phase === "home" && homeStory && (
+        <Dialogue lines={homeStoryLines(homeStory, playerName)} onComplete={completeHomeStory} />
       )}
 
       {phase === "shelter" && (
@@ -1657,8 +1931,8 @@ export default function Home() {
             <div className="keeper"><Character name="黎叔" variant="keeper" /><span>黎叔</span></div>
             <div className="shelter-copy">
               <div className="scene-index">01 · 临虹村宠物照护所</div>
-              <h2>它们也在<br />挑选自己的伙伴</h2>
-              <p>黎叔把三枚封印球放回抽屉。今天，不由训练师先做决定。</p>
+              <h2>不是领取宠物<br />而是互相选择</h2>
+              <p>黎叔没有拿出封印球。三只宠物记得你靠近时的每一步，也会用自己的方式作出回应。</p>
             </div>
             <div className="partner-selection">
               {Object.values(PARTNERS).map((candidate) => (
@@ -1670,11 +1944,15 @@ export default function Home() {
               ))}
             </div>
             <div className="shelter-footer">
-              <p>{partner ? `“${partner.name}没有进入封印球，而是站到了${playerName}身边。”` : "选择一只你想先了解的宠物。"}</p>
+              <p>{partner ? `“${partner.name}看了看黎叔，又主动站到了${playerName}身边。”` : "先了解它们的性格，再看看谁愿意向你走来。"}</p>
               <button type="button" className="primary-action" disabled={!partnerId} onClick={() => go("road")}><span>一起出发</span><b>›</b></button>
             </div>
           </div>
         </section>
+      )}
+
+      {phase === "shelter" && shelterIntroOpen && (
+        <Dialogue lines={shelterIntroLines(playerName)} onComplete={() => setShelterIntroOpen(false)} />
       )}
 
       {activeMap && partner && (
