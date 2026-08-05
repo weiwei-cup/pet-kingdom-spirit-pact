@@ -2,6 +2,27 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FIELD_RESEARCH_REQUIREMENTS,
+  INITIAL_FIELD_RESEARCH,
+  INITIAL_INVENTORY,
+  SUPPLY_OFFERS,
+  battleRewards,
+  buySupply,
+  calculateSkillDamage,
+  calculateWildCounterDamage,
+  captureChance,
+  claimFieldResearch,
+  elementMultiplier,
+  isFieldResearchComplete,
+  normalizeFieldResearch,
+  normalizeInventory,
+  recordBattleResolution,
+  recordEncounter,
+  type AdventureInventory,
+  type FieldResearch,
+  type SupplyOfferId,
+} from "./adventure-rules";
 import { canStandAt, integrateActorMovement, isEncounterTerrain } from "./overworld-engine";
 
 type Phase =
@@ -30,6 +51,7 @@ type Size = { width: number; height: number };
 type MapRect = { x1: number; y1: number; x2: number; y2: number };
 type ExplorationPhase = "road" | "city" | "festival" | "rupture" | "aftermath";
 type CollectionView = "bag" | "dex";
+type WildBattleResult = "active" | "captured" | "victory" | "escaped" | "defeat";
 type HomeDiscovery = "photo" | "letter" | "breakfast";
 type HomeStoryId = "wake" | HomeDiscovery | "door";
 type PetElement = "plant" | "metal" | "water" | "beast" | "wind" | "spirit" | "fire" | "earth" | "lightning" | "ice";
@@ -62,6 +84,8 @@ type SaveData = {
   activePetId?: PetSpeciesId;
   petProgress?: PetProgress[];
   homeDiscoveries?: HomeDiscovery[];
+  inventory?: AdventureInventory;
+  fieldResearch?: FieldResearch;
 };
 
 type Partner = {
@@ -435,12 +459,12 @@ function createPetProgress(id: PetSpeciesId): PetProgress {
   const unlocked = species.skills.filter((skill) => skill.level <= species.defaultLevel);
   const firstAttack = unlocked.find((skill) => skill.power !== null) ?? unlocked[0];
   const firstSupport = unlocked.find((skill) => skill.power === null && skill.name !== firstAttack?.name);
-  const secondAttack = unlocked.find((skill) => skill.name !== firstAttack?.name);
+  const remainingSkills = unlocked.filter((skill) => skill.name !== firstAttack?.name && skill.name !== firstSupport?.name);
   return {
     id,
     level: species.defaultLevel,
     experience: 0,
-    equippedSkills: [firstAttack, firstSupport ?? secondAttack].filter((skill): skill is PetSkill => Boolean(skill)).map((skill) => skill.name),
+    equippedSkills: [firstAttack, firstSupport, ...remainingSkills].filter((skill): skill is PetSkill => Boolean(skill)).slice(0, 4).map((skill) => skill.name),
   };
 }
 
@@ -452,7 +476,7 @@ function normalizePetProgress(value: unknown, id: PetSpeciesId): PetProgress {
   const level = typeof saved.level === "number" ? Math.max(species.defaultLevel, Math.floor(saved.level)) : fallback.level;
   const availableNames = new Set(species.skills.filter((skill) => skill.level <= level).map((skill) => skill.name));
   const equippedSkills = Array.isArray(saved.equippedSkills)
-    ? saved.equippedSkills.filter((name): name is string => typeof name === "string" && availableNames.has(name)).slice(0, 2)
+    ? saved.equippedSkills.filter((name): name is string => typeof name === "string" && availableNames.has(name)).slice(0, 4)
     : [];
   return {
     id,
@@ -472,7 +496,7 @@ function addPetExperience(progress: PetProgress, amount: number) {
   const unlocked = PET_SPECIES[progress.id].skills.filter((skill) => skill.level <= level);
   const equippedSkills = [...progress.equippedSkills];
   for (const skill of unlocked) {
-    if (equippedSkills.length >= 2) break;
+    if (equippedSkills.length >= 4) break;
     if (!equippedSkills.includes(skill.name)) equippedSkills.push(skill.name);
   }
   return { ...progress, level, experience, equippedSkills };
@@ -895,14 +919,14 @@ function PetCollectionModal({
                     <small>基础能力上限为 100，实际数值会随等级成长。</small>
                   </section>
                   <section className="pet-skill-panel">
-                    <h4>{view === "bag" && selectedProgress ? "技能配置 · 2 个技能槽" : "技能记录"}</h4>
+                    <h4>{view === "bag" && selectedProgress ? "技能配置 · 4 个技能槽" : "技能记录"}</h4>
                     {selected.skills.map((skill) => {
                       const unlocked = skill.level <= selectedLevel;
                       const equippedSlot = selectedProgress?.equippedSkills.indexOf(skill.name) ?? -1;
                       return <div className={`pet-skill element-${skill.element}${unlocked ? "" : " skill-locked"}`} key={skill.name}>
                         <span><i>Lv.{skill.level}</i><b>{unlocked ? skill.name : "尚未领悟"}</b><em>{unlocked ? skill.power === null ? "变化" : `威力 ${skill.power}` : `Lv.${skill.level} 解锁`}</em></span>
                         <p>{unlocked ? skill.description : "继续获得经验并提升等级后即可查看。"}</p>
-                        {view === "bag" && selectedProgress && unlocked && <div className="skill-slot-actions"><span>{equippedSlot >= 0 ? `已装备在技能 ${equippedSlot + 1}` : "可装备"}</span><button type="button" className={equippedSlot === 0 ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, 0, skill.name)}>技能 1</button><button type="button" className={equippedSlot === 1 ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, 1, skill.name)}>技能 2</button></div>}
+                        {view === "bag" && selectedProgress && unlocked && <div className="skill-slot-actions"><span>{equippedSlot >= 0 ? `已装备在技能 ${equippedSlot + 1}` : "可装备"}</span>{[0, 1, 2, 3].map((slot) => <button type="button" key={slot} className={equippedSlot === slot ? "active" : ""} disabled={managementLocked} onClick={() => onEquipSkill(selectedId, slot, skill.name)}>技能 {slot + 1}</button>)}</div>}
                       </div>;
                     })}
                   </section>
@@ -910,6 +934,50 @@ function PetCollectionModal({
               </>
             )}
           </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FieldCampModal({
+  inventory,
+  research,
+  onBuy,
+  onClaim,
+  onClose,
+}: {
+  inventory: AdventureInventory;
+  research: FieldResearch;
+  onBuy: (offerId: SupplyOfferId) => void;
+  onClaim: () => void;
+  onClose: () => void;
+}) {
+  const researchReady = isFieldResearchComplete(research);
+  return (
+    <div className="modal-backdrop field-camp-backdrop" onClick={onClose}>
+      <section className="field-camp-modal" onClick={(event) => event.stopPropagation()} aria-label="青崖调查营地">
+        <button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button>
+        <header><small>QINGYA FIELD CAMP</small><h2>青崖调查营地</h2><p>休整、补充捕捉用品，并提交这片水道的生态记录。</p></header>
+        <div className="camp-wallet"><span>持有金币</span><b>{inventory.coins}</b><i>胶囊 {inventory.capsules}</i><i>莓果 {inventory.berries}</i></div>
+        <div className="camp-layout">
+          <section className="camp-shop">
+            <h3>旅行补给</h3>
+            {(Object.entries(SUPPLY_OFFERS) as Array<[SupplyOfferId, (typeof SUPPLY_OFFERS)[SupplyOfferId]]>).map(([id, offer]) => (
+              <button type="button" key={id} disabled={inventory.coins < offer.price} onClick={() => onBuy(id)}>
+                <span><b>{offer.name}</b><small>{offer.description}</small></span><em>{offer.price} 金币</em>
+              </button>
+            ))}
+          </section>
+          <section className={`camp-research${researchReady ? " is-ready" : ""}${research.claimed ? " is-claimed" : ""}`}>
+            <h3>支线 · 青崖生态调查</h3>
+            <p>黎叔希望确认水道异变前后的宠物活动。战斗或捕捉都能留下有效记录。</p>
+            <div><span>发现不同宠物</span><b>{Math.min(research.encounteredSpecies.length, FIELD_RESEARCH_REQUIREMENTS.species)} / {FIELD_RESEARCH_REQUIREMENTS.species}</b></div>
+            <div><span>完成野外战斗</span><b>{Math.min(research.resolvedBattles, FIELD_RESEARCH_REQUIREMENTS.battles)} / {FIELD_RESEARCH_REQUIREMENTS.battles}</b></div>
+            <div><span>完成捕捉</span><b>{Math.min(research.capturedPets, FIELD_RESEARCH_REQUIREMENTS.captures)} / {FIELD_RESEARCH_REQUIREMENTS.captures}</b></div>
+            <button type="button" disabled={!researchReady || research.claimed} onClick={onClaim}>{research.claimed ? "报酬已领取" : researchReady ? "提交记录 · 领取报酬" : "调查尚未完成"}</button>
+            <small>报酬：金币 120 · 召唤胶囊 3 · 香甜莓果 2</small>
+          </section>
         </div>
       </section>
     </div>
@@ -1438,6 +1506,7 @@ export default function Home() {
   const [soundOn, setSoundOn] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [collectionView, setCollectionView] = useState<CollectionView | null>(null);
+  const [fieldCampOpen, setFieldCampOpen] = useState(false);
   const [ownedPetIds, setOwnedPetIds] = useState<PetSpeciesId[]>([]);
   const [seenPetIds, setSeenPetIds] = useState<PetSpeciesId[]>([]);
   const [activePetId, setActivePetId] = useState<PetSpeciesId | null>(null);
@@ -1460,6 +1529,8 @@ export default function Home() {
   const [loadedMapId, setLoadedMapId] = useState<ExplorationPhase | null>(null);
   const [fieldSize, setFieldSize] = useState<Size>({ width: 1280, height: 720 });
   const [encounterPending, setEncounterPending] = useState(false);
+  const [inventory, setInventory] = useState<AdventureInventory>({ ...INITIAL_INVENTORY });
+  const [fieldResearch, setFieldResearch] = useState<FieldResearch>({ ...INITIAL_FIELD_RESEARCH });
   const [routeEncounterId, setRouteEncounterId] = useState<RouteEncounterId>("wild");
   const fieldViewportRef = useRef<HTMLDivElement | null>(null);
   const preloadedAssetsRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -1472,11 +1543,10 @@ export default function Home() {
   const roadInGrassRef = useRef(false);
   const homeHintZoneRef = useRef("");
   const encounterPendingRef = useRef(false);
-  const [berry, setBerry] = useState(true);
   const [wildHp, setWildHp] = useState(32);
+  const [wildPlayerHp, setWildPlayerHp] = useState(66);
   const [wildCalm, setWildCalm] = useState(0);
-  const [balls, setBalls] = useState(3);
-  const [captureWon, setCaptureWon] = useState(false);
+  const [wildBattleResult, setWildBattleResult] = useState<WildBattleResult>("active");
   const [captureLog, setCaptureLog] = useState("茸角鼠被荆棘缠住，正警惕地望着你。");
   const [cityDialogueOpen, setCityDialogueOpen] = useState(false);
   const [festivalDialogueOpen, setFestivalDialogueOpen] = useState(false);
@@ -1499,6 +1569,7 @@ export default function Home() {
   const activeSpecies = activePetId ? PET_SPECIES[activePetId] : null;
   const activeStats = activeSpecies && activeProgress ? scaledPetStats(activeSpecies, activeProgress.level) : null;
   const activePetHp = activeStats?.hp;
+  const activePetHpRef = useRef(activePetHp);
   const equippedSkillDefinitions = activeSpecies && activeProgress
     ? activeProgress.equippedSkills.map((name) => activeSpecies.skills.find((skill) => skill.name === name)).filter((skill): skill is PetSkill => Boolean(skill))
     : [];
@@ -1520,6 +1591,10 @@ export default function Home() {
     ? EXPLORATION_MAPS[phase as ExplorationPhase]
     : null;
   const mapAssetReady = activeMap !== null && loadedMapId === activeMap.id;
+
+  useEffect(() => {
+    activePetHpRef.current = activePetHp;
+  }, [activePetHp]);
 
   const mapCamera = useMemo(() => {
     const scale = Math.max(fieldSize.width / MAP_PIXEL_SIZE.width, fieldSize.height / MAP_PIXEL_SIZE.height, fieldSize.width < 700 ? 0.72 : 0.82);
@@ -1564,9 +1639,11 @@ export default function Home() {
       activePetId: activePetId ?? undefined,
       petProgress,
       homeDiscoveries,
+      inventory,
+      fieldResearch,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [activePetId, captured, homeDiscoveries, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
+  }, [activePetId, captured, fieldResearch, homeDiscoveries, inventory, ownedPetIds, partnerId, petProgress, phase, playerName, routeEncounterId, seenPetIds]);
 
   useEffect(() => {
     for (const source of SCENE_PRELOADS[phase] ?? []) {
@@ -1665,13 +1742,13 @@ export default function Home() {
     if (next === "rupture") registerPetSightings(["frost", "lantern"]);
     if (next === "aftermath") registerPetSightings(["moss"]);
     if (next === "boss") registerPetSightings(["guardian"]);
-    if (next === "exam" && activePetHp) setExamHp(activePetHp);
-    if (next === "boss" && activePetHp) setBossPlayerHp(activePetHp);
+    if (next === "exam" && activePetHpRef.current) setExamHp(activePetHpRef.current);
+    if (next === "boss" && activePetHpRef.current) setBossPlayerHp(activePetHpRef.current);
     if (next === "city") setCityDialogueOpen(false);
     if (next === "festival") setFestivalDialogueOpen(false);
     if (next === "aftermath") setAftermathDialogueOpen(false);
     setPhase(next);
-  }, [activePetHp, playTone, prepareExplorationMap, registerPetSightings]);
+  }, [playTone, prepareExplorationMap, registerPetSightings]);
 
   const newGame = () => {
     window.localStorage.removeItem(SAVE_KEY);
@@ -1680,6 +1757,7 @@ export default function Home() {
     setPartnerId(null);
     setCaptured(false);
     setCollectionView(null);
+    setFieldCampOpen(false);
     setOwnedPetIds([]);
     setSeenPetIds([]);
     setActivePetId(null);
@@ -1704,13 +1782,14 @@ export default function Home() {
     setEncounterPending(false);
     encounterPendingRef.current = false;
     setRouteEncounterId("wild");
+    setInventory({ ...INITIAL_INVENTORY });
+    setFieldResearch({ ...INITIAL_FIELD_RESEARCH });
     grassStepsRef.current = 0;
     grassTravelDistanceRef.current = 0;
-    setBerry(true);
     setWildHp(32);
+    setWildPlayerHp(66);
     setWildCalm(0);
-    setBalls(3);
-    setCaptureWon(false);
+    setWildBattleResult("active");
     setCaptureLog("高草突然晃动，一只茸角鼠警惕地跳了出来！");
     setCityDialogueOpen(false);
     setFestivalDialogueOpen(false);
@@ -1762,6 +1841,9 @@ export default function Home() {
       setSeenPetIds(restoredSeen);
       setActivePetId(restoredActivePetId);
       setPetProgress(restoredProgress);
+      setInventory(normalizeInventory(saved.inventory));
+      setFieldResearch(normalizeFieldResearch(saved.fieldResearch));
+      setFieldCampOpen(false);
       const restoredHomeDiscoveries = (saved.homeDiscoveries ?? []).filter((entry): entry is HomeDiscovery => entry === "photo" || entry === "letter" || entry === "breakfast");
       setHomePos(HOME_START);
       homePositionLiveRef.current = HOME_START;
@@ -1775,6 +1857,7 @@ export default function Home() {
         const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level).hp;
         setExamHp(restoredHp);
         setBossPlayerHp(restoredHp);
+        setWildPlayerHp(restoredHp);
       }
       prepareExplorationMap(restoredPhase);
       setPhase(restoredPhase);
@@ -1791,6 +1874,7 @@ export default function Home() {
     registerPetSightings(STARTER_SIGHTINGS);
     setExamHp(PARTNERS[id].hp);
     setBossPlayerHp(PARTNERS[id].hp);
+    setWildPlayerHp(PARTNERS[id].hp);
     playTone(id === "leaf" ? 480 : id === "metal" ? 330 : 580);
   };
 
@@ -1801,6 +1885,7 @@ export default function Home() {
     setActivePetId(id);
     setExamHp(hp);
     setBossPlayerHp(hp);
+    setWildPlayerHp(hp);
     setToast(`${PET_SPECIES[id].name}成为了新的首发伙伴。`);
     playTone(680);
   }, [ownedPetIds, petProgress, playTone]);
@@ -1810,7 +1895,7 @@ export default function Home() {
       if (entry.id !== id) return entry;
       const species = PET_SPECIES[id];
       const skill = species.skills.find((candidate) => candidate.name === skillName);
-      if (!skill || skill.level > entry.level || slot < 0 || slot > 1) return entry;
+      if (!skill || skill.level > entry.level || slot < 0 || slot > 3) return entry;
       const next = [...entry.equippedSkills];
       const previousSlot = next.indexOf(skillName);
       if (previousSlot === slot) return entry;
@@ -1822,10 +1907,31 @@ export default function Home() {
       } else {
         next[slot] = skillName;
       }
-      return { ...entry, equippedSkills: next.filter(Boolean).slice(0, 2) };
+      return { ...entry, equippedSkills: next.filter(Boolean).slice(0, 4) };
     }));
     playTone(740);
   }, [playTone]);
+
+  const purchaseSupply = useCallback((offerId: SupplyOfferId) => {
+    const result = buySupply(inventory, offerId);
+    if (!result.purchased) {
+      setToast("金币不够。完成野外战斗或提交生态调查可以获得报酬。");
+      playTone(130);
+      return;
+    }
+    setInventory(result.inventory);
+    setToast(`购入${SUPPLY_OFFERS[offerId].name}。用品已经放进训练师背包。`);
+    playTone(720);
+  }, [inventory, playTone]);
+
+  const claimResearchReward = useCallback(() => {
+    const result = claimFieldResearch(fieldResearch, inventory);
+    if (!result.claimed) return;
+    setFieldResearch(result.research);
+    setInventory(result.inventory);
+    setToast("青崖生态调查完成：获得 120 金币、3 枚胶囊和 2 份莓果。");
+    playTone(860);
+  }, [fieldResearch, inventory, playTone]);
 
   const handleHomePosition = useCallback((position: Position) => {
     homePositionLiveRef.current = position;
@@ -1896,11 +2002,12 @@ export default function Home() {
     const encounter = ROUTE_ENCOUNTERS[id];
     grassTravelDistanceRef.current = 0;
     registerPetSightings([id]);
+    setFieldResearch((current) => recordEncounter(current, id));
     setRouteEncounterId(id);
     setWildHp(encounter.maxHp);
+    setWildPlayerHp(activePetHpRef.current ?? 60);
     setWildCalm(0);
-    setBalls(3);
-    setCaptureWon(false);
+    setWildBattleResult("active");
     setCaptureLog(`高草突然晃动，${encounter.name}警惕地跳了出来！`);
     setToast(`野生的${encounter.name}出现了！`);
     setEncounterPending(true);
@@ -1914,7 +2021,7 @@ export default function Home() {
     if (inGrass !== roadInGrassRef.current) {
       roadInGrassRef.current = inGrass;
       setRoadInGrass(inGrass);
-      if (inGrass) setToast(captured ? "高草沙沙作响。图鉴里已经有这片区域的记录。" : "高草在脚边晃动……");
+      if (inGrass) setToast(captured ? "高草沙沙作响。继续调查可能遇到不同的宠物。" : "高草在脚边晃动……");
       else if (phase === "road") setToast(captured ? "沿石阶和道路绕向东北城门。" : "金色高草里有野生宠物活动的痕迹。");
       else setToast(activeMap.missionText);
     }
@@ -1923,7 +2030,6 @@ export default function Home() {
       grassTravelDistanceRef.current = 0;
       return;
     }
-    if (captured) return;
     grassTravelDistanceRef.current += distancePixels;
     if (grassTravelDistanceRef.current < 72) return;
     grassTravelDistanceRef.current -= 72;
@@ -1948,9 +2054,15 @@ export default function Home() {
   }, [activeMap, playTone]);
 
   const exploreInteraction = useCallback((position: Position) => {
-    if (!activeMap || !mapAssetReady || collectionView !== null || helpOpen) return;
+    if (!activeMap || !mapAssetReady || collectionView !== null || fieldCampOpen || helpOpen) return;
     roadPositionLiveRef.current = position;
     setRoadPos(position);
+    if (phase === "road" && distance(position, ROAD_START) < 9) {
+      setFieldCampOpen(true);
+      setToast(isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed ? "生态调查已经完成，可以在营地提交记录。" : "青崖调查营地提供补给和生态调查委托。");
+      playTone(610);
+      return;
+    }
     if (phase === "road" && distance(position, activeMap.interaction) < 8) {
       if (!captured) {
         setToast("学院要求先完成一次野外捕捉练习。去高草区看看吧。");
@@ -1959,6 +2071,13 @@ export default function Home() {
       }
       setToast("城门守卫确认了图鉴记录。欢迎来到彩虹城！");
       go("city");
+      return;
+    }
+    if (phase === "city" && distance(position, EXPLORATION_MAPS.city.start) < 8) {
+      setRoadPos(CITY_GATE);
+      roadPositionLiveRef.current = CITY_GATE;
+      setToast("穿过南门，重新回到了青崖水道。营地和高草调查仍会保留进度。");
+      go("road");
       return;
     }
     if (phase === "city" && distance(position, activeMap.interaction) < 8) {
@@ -1996,7 +2115,7 @@ export default function Home() {
     if (phase === "festival") setToast("中央彩虹纹章是庆典会合点，靠近后按 E。");
     if (phase === "rupture") setToast(ruptureNodes.length === 3 ? "前往上方裂隙台。" : "靠近尚未稳定的发光晶柱后按 E。");
     if (phase === "aftermath") setToast("从左右回廊绕过中央晶核，前往上方记忆祭台。");
-  }, [activeMap, captured, collectionView, go, helpOpen, mapAssetReady, phase, playTone, ruptureNodes]);
+  }, [activeMap, captured, collectionView, fieldCampOpen, fieldResearch, go, helpOpen, mapAssetReady, phase, playTone, ruptureNodes]);
 
   useEffect(() => {
     if (!encounterPending) return;
@@ -2009,59 +2128,146 @@ export default function Home() {
   }, [encounterPending, go]);
 
 
-  const captureAction = async (action: "attack" | "calm" | "ball") => {
-    if (captureWon || battleBusy || !partner) return;
+  const finishWildBattle = (wasCaptured: boolean) => {
+    const rewards = battleRewards(routeEncounter.level, wasCaptured);
+    setWildBattleResult(wasCaptured ? "captured" : "victory");
+    setInventory((current) => ({ ...current, coins: current.coins + rewards.coins }));
+    setFieldResearch((current) => recordBattleResolution(current, wasCaptured));
+    setPetProgress((current) => {
+      const withCaptured = wasCaptured && !current.some((entry) => entry.id === routeEncounter.id)
+        ? [...current, createPetProgress(routeEncounter.id)]
+        : current;
+      return withCaptured.map((entry) => {
+        if (entry.id === activePetId) return addPetExperience(entry, rewards.experience);
+        if (wasCaptured && entry.id === routeEncounter.id) return addPetExperience(entry, 12);
+        return entry;
+      });
+    });
+    if (wasCaptured) {
+      setCaptured(true);
+      setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]));
+      registerPetSightings([routeEncounter.id]);
+    }
+    return rewards;
+  };
+
+  const wildCounterAttack = async (guarding = false, hpBeforeCounter = wildPlayerHp) => {
+    if (!partner) return false;
+    const incoming = calculateWildCounterDamage({
+      enemyLevel: routeEncounter.level,
+      enemyPower: 36 + routeEncounter.level * 2,
+      defense: activeStats?.defense ?? 45,
+      guarding,
+    });
+    const nextHp = Math.max(0, hpBeforeCounter - incoming);
+    setCaptureLog(`${routeEncounter.name}抓住空隙发动反击！`);
+    await animateBattleFx({ skill: `${routeEncounter.name}的反击`, kind: "claw", attacker: "enemy", target: "ally", value: `-${incoming}` }, () => setWildPlayerHp(nextHp));
+    if (nextHp <= 0) {
+      const loss = Math.min(18, inventory.coins);
+      setInventory((current) => ({ ...current, coins: Math.max(0, current.coins - loss) }));
+      setWildBattleResult("defeat");
+      setCaptureLog(`${partner.name}失去了战斗能力。巡逻员把你们送回营地，遗失了 ${loss} 枚金币。`);
+      return true;
+    }
+    setCaptureLog(`${routeEncounter.name}的反击造成 ${incoming} 点伤害。`);
+    return false;
+  };
+
+  const captureAction = async (action: number | "calm" | "ball" | "escape") => {
+    if (wildBattleResult !== "active" || battleBusy || !partner || !activeSpecies || !activeProgress || !activeStats) return;
     setBattleBusy(true);
     try {
-      if (action === "attack") {
-        const damage = Math.max(7, Math.round((primaryBattleSkill?.power ?? 35) / 5));
-        const nextHp = Math.max(4, wildHp - damage);
-        setCaptureLog(`${partner.name}压低身体，准备使出${partner.attack}！`);
-        await animateBattleFx({ skill: partner.attack, kind: petBattleFxKind(primaryBattleSkill?.element ?? activeSpecies?.element ?? "beast"), attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
-        setCaptureLog(`${partner.attack}命中！${routeEncounter.name}踉跄后退，动作慢了下来。`);
+      if (typeof action === "number") {
+        const skill = equippedSkillDefinitions[action];
+        if (!skill) return;
+        if (skill.power === null) {
+          const guarding = skill.description.includes("防御") || skill.description.includes("伤害减半") || ["metal", "earth"].includes(skill.element);
+          const healing = guarding ? 0 : Math.max(8, Math.round(activeStats.spirit * 0.16));
+          const healedHp = Math.min(partner.hp, wildPlayerHp + healing);
+          setCaptureLog(`${partner.name}准备使出${skill.name}。`);
+          await animateBattleFx({ skill: skill.name, kind: guarding ? "guard" : "heal", attacker: "ally", target: "ally", value: guarding ? "防御提升" : `HP +${healing}`, positive: true }, () => {
+            if (healing > 0) setWildPlayerHp(healedHp);
+          });
+          await wildCounterAttack(guarding, healedHp);
+          return;
+        }
+        const targetSpecies = PET_SPECIES[routeEncounter.id];
+        const multiplier = elementMultiplier(skill.element, targetSpecies.element);
+        const damage = calculateSkillDamage({
+          power: skill.power,
+          level: activeProgress.level,
+          attack: activeStats.attack,
+          defense: targetSpecies.stats.defense,
+          multiplier,
+        });
+        const nextHp = Math.max(0, wildHp - damage);
+        const effectiveness = multiplier > 1.1 ? "效果拔群！" : multiplier < 0.8 ? "效果不太理想。" : "";
+        setCaptureLog(`${partner.name}锁定目标，使出${skill.name}！`);
+        await animateBattleFx({ skill: skill.name, kind: petBattleFxKind(skill.element), attacker: "ally", target: "enemy", value: `-${wildHp - nextHp}` }, () => setWildHp(nextHp));
+        if (nextHp <= 0) {
+          const rewards = finishWildBattle(false);
+          setCaptureLog(`${routeEncounter.name}失去战斗能力。${effectiveness} 获得 ${rewards.experience} 经验与 ${rewards.coins} 金币。`);
+          playTone(820);
+          return;
+        }
+        setCaptureLog(`${skill.name}造成 ${damage} 点伤害。${effectiveness}`);
+        await wildCounterAttack(false);
         return;
       }
       if (action === "calm") {
+        if (inventory.berries <= 0) {
+          setCaptureLog("香甜莓果已经用完。可以撤退后到青崖调查营地补给。");
+          playTone(130);
+          return;
+        }
         const nextCalm = Math.min(3, wildCalm + 1);
         setCaptureLog("你没有逼近，而是把香甜莓果轻轻放到了地上。");
-        await animateBattleFx({ skill: "安抚 · 香甜莓果", kind: "calm", attacker: "trainer", target: "enemy", value: "戒备 ↓", positive: true }, () => setWildCalm(nextCalm));
-        setCaptureLog(berry ? `${routeEncounter.name}嗅了嗅莓果，戒备的姿势慢慢放松下来。` : `${routeEncounter.name}仍然很戒备。`);
+        await animateBattleFx({ skill: "安抚 · 香甜莓果", kind: "calm", attacker: "trainer", target: "enemy", value: "戒备 ↓", positive: true }, () => {
+          setInventory((current) => ({ ...current, berries: Math.max(0, current.berries - 1) }));
+          setWildCalm(nextCalm);
+        });
+        setCaptureLog(`${routeEncounter.name}嗅了嗅莓果，戒备的姿势慢慢放松下来。`);
+        await wildCounterAttack(true);
         return;
       }
-      if (balls <= 0) {
-        setCaptureLog("召唤胶囊已经用完了。黎叔的备用包里又滚出了两枚。");
-        setBalls(2);
-        return;
-      }
-      const captureThreshold = Math.ceil(routeEncounter.maxHp / 2);
-      const success = wildHp <= captureThreshold && wildCalm >= 1;
-      setCaptureLog(`召唤胶囊划出一道弧光，落在${routeEncounter.name}面前……`);
-      await animateBattleFx({ skill: "召唤胶囊", kind: "capsule", attacker: "trainer", target: "enemy", value: success ? "灵契成立" : "挣脱！", positive: success }, () => {
-        setBalls((value) => value - 1);
+      if (action === "escape") {
+        const targetSpeed = PET_SPECIES[routeEncounter.id].stats.speed;
+        const successChance = Math.max(0.45, Math.min(0.9, 0.68 + (activeStats.speed - targetSpeed) / 180));
+        const success = Math.random() < successChance;
+        setCaptureLog(success ? `${partner.name}掩护你退出了高草。` : `${routeEncounter.name}挡住了撤退路线！`);
+        await animateBattleFx({ skill: "撤离战斗", kind: "wind", attacker: "ally", target: success ? "ally" : "enemy", value: success ? "成功撤离" : "撤离失败", positive: success });
         if (success) {
-          setCaptured(true);
-          setCaptureWon(true);
-          setOwnedPetIds((current) => mergePetIds(current, [routeEncounter.id]));
-          setPetProgress((current) => {
-            const withCaptured = current.some((entry) => entry.id === routeEncounter.id)
-              ? current
-              : [...current, createPetProgress(routeEncounter.id)];
-            return withCaptured.map((entry) => {
-              if (entry.id === activePetId) return addPetExperience(entry, 55);
-              if (entry.id === routeEncounter.id) return addPetExperience(entry, 20);
-              return entry;
-            });
-          });
-          registerPetSightings([routeEncounter.id]);
+          setWildBattleResult("escaped");
+          return;
         }
+        await wildCounterAttack(false);
+        return;
+      }
+      if (inventory.capsules <= 0) {
+        setCaptureLog("召唤胶囊已经用完。可以继续战斗获取金币，再到青崖调查营地补给。");
+        playTone(130);
+        return;
+      }
+      const chance = captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) });
+      const success = Math.random() < chance;
+      setCaptureLog(`捕捉成功率约 ${Math.round(chance * 100)}%。召唤胶囊划出一道弧光……`);
+      await animateBattleFx({ skill: "召唤胶囊", kind: "capsule", attacker: "trainer", target: "enemy", value: success ? "灵契成立" : "挣脱！", positive: success }, () => {
+        setInventory((current) => ({ ...current, capsules: Math.max(0, current.capsules - 1) }));
       });
-      setCaptureLog(success ? `胶囊没有强行关闭。${routeEncounter.name}主动触碰按钮，接受了你的邀请；${partner.name}获得 55 点经验。` : wildHp > captureThreshold ? `${routeEncounter.name}还有力气挣脱。先让它停下来。` : "它的体力已经很低，但仍不信任你。试着安抚它。");
+      if (success) {
+        const rewards = finishWildBattle(true);
+        setCaptureLog(`${routeEncounter.name}主动触碰胶囊，接受了你的邀请。获得 ${rewards.experience} 经验与 ${rewards.coins} 金币。`);
+        playTone(860);
+        return;
+      }
+      setCaptureLog(`${routeEncounter.name}挣脱了胶囊！当前成功率约 ${Math.round(chance * 100)}%。`);
+      await wildCounterAttack(false);
     } finally {
       setBattleBusy(false);
     }
   };
 
-  const examAction = async (slot: 0 | 1) => {
+  const examAction = async (slot: number) => {
     if (examWon || battleBusy || !partner) return;
     const skill = equippedSkillDefinitions[slot];
     if (!skill) return;
@@ -2180,6 +2386,7 @@ export default function Home() {
           </button>
           <div className="chapter-label"><span />{chapterLabel}</div>
           <div className="hud-actions">
+            {partner && <div className="adventure-wallet" aria-label="训练师背包资源"><span>金<b>{inventory.coins}</b></span><span>球<b>{inventory.capsules}</b></span><span>果<b>{inventory.berries}</b></span></div>}
             {partner && <div className="partner-chip"><PetSprite id={partner.id} size="sm" /><span><small>{partner.kind}</small><b>{partner.name}</b></span></div>}
             {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("bag"); }} aria-label="打开宠物背包"><b>包</b><small>{ownedPetIds.length}/6</small></button>}
             {partner && <button type="button" className="icon-button collection-button" onClick={() => { setHelpOpen(false); setCollectionView("dex"); }} aria-label="打开宠物图鉴"><b>鉴</b><small>{seenPetIds.length}/{PET_SPECIES_ORDER.length}</small></button>}
@@ -2293,12 +2500,16 @@ export default function Home() {
           roadInGrass={roadInGrass}
           toast={toast}
           encounterPending={encounterPending}
-          missionTitle={phase === "road" && captured ? "前往彩虹城" : activeMap.missionTitle}
-          missionText={phase === "road" && captured ? "从下方营地沿道路向东，经中央石阶绕往东北城门。" : activeMap.missionText}
-          missionItems={phase === "road" ? [
-            { label: "在高草中遭遇宠物", done: captured },
-            { label: "完成一次捕捉", done: captured },
-            { label: "沿正确道路抵达城门" },
+          missionTitle={phase === "road" && captured ? "支线 · 青崖生态调查" : activeMap.missionTitle}
+          missionText={phase === "road" && captured ? "继续调查高草生态，或沿石阶前往东北方的彩虹城门。" : activeMap.missionText}
+          missionItems={phase === "road" ? captured ? [
+            { label: `发现不同宠物 ${Math.min(fieldResearch.encounteredSpecies.length, FIELD_RESEARCH_REQUIREMENTS.species)}/${FIELD_RESEARCH_REQUIREMENTS.species}`, done: fieldResearch.encounteredSpecies.length >= FIELD_RESEARCH_REQUIREMENTS.species },
+            { label: `完成战斗 ${Math.min(fieldResearch.resolvedBattles, FIELD_RESEARCH_REQUIREMENTS.battles)}/${FIELD_RESEARCH_REQUIREMENTS.battles}`, done: fieldResearch.resolvedBattles >= FIELD_RESEARCH_REQUIREMENTS.battles },
+            { label: fieldResearch.claimed ? "调查报酬已领取" : `捕捉宠物 ${Math.min(fieldResearch.capturedPets, FIELD_RESEARCH_REQUIREMENTS.captures)}/${FIELD_RESEARCH_REQUIREMENTS.captures}`, done: fieldResearch.capturedPets >= FIELD_RESEARCH_REQUIREMENTS.captures },
+          ] : [
+            { label: "在高草中遭遇宠物", done: false },
+            { label: "完成第一次捕捉", done: false },
+            { label: "返回营地或前往城门", done: false },
           ] : phase === "city" ? [
             { label: "从南门进入学院区", done: roadPos.y < 82 },
             { label: "绕过中央星泉", done: roadPos.y < 42 },
@@ -2314,11 +2525,15 @@ export default function Home() {
             { label: "抵达上方记忆祭台" },
           ]}
           mapReady={mapAssetReady}
-          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || helpOpen}
+          movementDisabled={encounterPending || cityDialogueOpen || festivalDialogueOpen || aftermathDialogueOpen || collectionView !== null || fieldCampOpen || helpOpen}
           onMapReady={setLoadedMapId}
           markers={<>
-            {phase === "road" && <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>}
+            {phase === "road" && <>
+              <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${ROAD_START.x}%`, top: `${ROAD_START.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed ? "调查营地 · 可提交" : "青崖调查营地"}</span><i>补给 / 委托</i></button>
+              <button type="button" className={`map-landmark gate-landmark${captured ? " landmark-ready" : ""}`} style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>{captured ? "彩虹城 · 可进入" : "彩虹城"}</span><i>按 E</i></button>
+            </>}
             {phase === "city" && <button type="button" className="map-landmark npc-landmark landmark-ready" style={{ left: `${activeMap.interaction.x}%`, top: `${activeMap.interaction.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><Character name="诺亚" variant="noah" small /><span>诺亚 · 学院门前</span><i>按 E</i></button>}
+            {phase === "city" && <button type="button" className="map-landmark camp-landmark landmark-ready" style={{ left: `${EXPLORATION_MAPS.city.start.x}%`, top: `${EXPLORATION_MAPS.city.start.y}%` }} onClick={() => exploreInteraction(roadPositionLiveRef.current)}><span>南门 · 青崖水道</span><i>返回野外</i></button>}
             {phase === "festival" && <>
               {FESTIVAL_HEROES.map((hero, index) => {
                 const positions = [{ x: 39, y: 45 }, { x: 45, y: 38 }, { x: 55, y: 38 }, { x: 61, y: 45 }, { x: 50, y: 31 }];
@@ -2347,20 +2562,34 @@ export default function Home() {
         <section className={`battle-screen capture-battle${battleBusy ? " battle-busy" : ""}${battleFx?.stage === "impact" ? " battle-impact" : ""}`}>
           <div className="battle-backdrop field-battle-bg"><i /><i /><i /></div>
           <BattleEffects fx={battleFx} />
-          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>高草遭遇</h2><p>先降低体力，再用莓果安抚，最后投出召唤胶囊。</p></div>
+          <div className="battle-heading"><small>WILD ENCOUNTER</small><h2>青崖野外战</h2><p>观察属性与戒备，选择击败、捕捉或撤离。野生宠物也会反击。</p></div>
           <div className="enemy-side">
             <div className="combatant-info"><span><b>{routeEncounter.name}</b><small>{routeEncounter.kind} · Lv.{routeEncounter.level}</small></span><em>{wildHp} / {routeEncounter.maxHp}</em><Meter value={wildHp} max={routeEncounter.maxHp} /></div>
             <div className={battleActorClass("enemy", battleFx)}><PetSprite id={routeEncounter.id} size="xl" /></div>
-            <div className="calm-indicator"><span>戒备</span><Meter value={wildCalm} max={3} kind="calm" /></div>
+            <div className="calm-indicator"><span>安抚 {wildCalm}/3 · 捕捉率 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) }) * 100)}%</span><Meter value={wildCalm} max={3} kind="calm" /></div>
           </div>
-          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>状态良好</em><Meter value={partner.hp} max={partner.hp} /></div></div>
+          <div className="ally-side"><div className={battleActorClass("ally", battleFx)}><PetSprite id={partner.id} size="xl" /></div><div className="combatant-info"><span><b>{partner.name}</b><small>{partner.kind} · Lv.{activeProgress?.level ?? 5}</small></span><em>{wildPlayerHp} / {partner.hp}</em><Meter value={wildPlayerHp} max={partner.hp} /></div></div>
           <div className="battle-command">
-            <div className="battle-log"><span>行动记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "演出中" : "等待指令"}</i><p>{captureLog}</p></div>
-            {!captureWon ? <div className="command-grid">
-              <button type="button" disabled={battleBusy} onClick={() => captureAction("attack")}><span>攻击</span><b>{partner.attack}</b><small>降低体力</small></button>
-              <button type="button" disabled={battleBusy} onClick={() => captureAction("calm")}><span>安抚</span><b>放下莓果</b><small>降低戒备</small></button>
-              <button type="button" disabled={battleBusy} className="ball-command" onClick={() => captureAction("ball")}><span>道具 · {balls}</span><b>召唤胶囊</b><small>邀请同行</small></button>
-            </div> : <button type="button" className="primary-action battle-continue" onClick={() => { setToast("捕捉完成。沿道路前往东北方的彩虹城门。"); setRoadInGrass(false); roadInGrassRef.current = false; go("road"); }}><span>带新伙伴返回地图</span><b>›</b></button>}
+            <div className="battle-log"><span>行动记录 · 金币 {inventory.coins}</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : wildBattleResult === "active" ? "等待指令" : "战斗结束"}</i><p>{captureLog}</p></div>
+            {wildBattleResult === "active" ? <div className="command-grid wild-command-grid">
+              {equippedSkillDefinitions.map((skill, slot) => <button type="button" key={skill.name} disabled={battleBusy} onClick={() => captureAction(slot)}><span>技能 {String(slot + 1).padStart(2, "0")}</span><b>{skill.name}</b><small>{skill.power === null ? "变化技能" : `${skill.element === PET_SPECIES[routeEncounter.id].element ? "同系" : "属性"} · 威力 ${skill.power}`}</small></button>)}
+              <button type="button" disabled={battleBusy || inventory.berries <= 0} onClick={() => captureAction("calm")}><span>道具 · {inventory.berries}</span><b>香甜莓果</b><small>安抚并减轻反击</small></button>
+              <button type="button" disabled={battleBusy || inventory.capsules <= 0} className="ball-command" onClick={() => captureAction("ball")}><span>胶囊 · {inventory.capsules}</span><b>尝试捕捉</b><small>当前 {Math.round(captureChance({ hp: wildHp, maxHp: routeEncounter.maxHp, calm: wildCalm, alreadyOwned: ownedPetIds.includes(routeEncounter.id) }) * 100)}%</small></button>
+              <button type="button" disabled={battleBusy} onClick={() => captureAction("escape")}><span>行动</span><b>撤离战斗</b><small>速度越高越容易成功</small></button>
+            </div> : <button type="button" className="primary-action battle-continue" onClick={() => {
+              const defeated = wildBattleResult === "defeat";
+              const researchReady = isFieldResearchComplete(fieldResearch) && !fieldResearch.claimed;
+              if (defeated) {
+                setRoadPos(ROAD_START);
+                roadPositionLiveRef.current = ROAD_START;
+              }
+              setToast(defeated ? "巡逻员把你送回了青崖调查营地。" : researchReady ? "生态调查已经完成，返回下方营地提交记录。" : captured ? "可以继续调查高草，也可以前往东北方的彩虹城门。" : "返回高草后仍可继续尝试捕捉。 ");
+              setRoadInGrass(false);
+              roadInGrassRef.current = false;
+              grassStepsRef.current = 0;
+              grassTravelDistanceRef.current = 0;
+              go("road");
+            }}><span>{wildBattleResult === "captured" ? "带新伙伴返回地图" : wildBattleResult === "victory" ? "领取战利品并返回" : wildBattleResult === "defeat" ? "返回调查营地" : "退出高草"}</span><b>›</b></button>}
           </div>
         </section>
       )}
@@ -2385,8 +2614,7 @@ export default function Home() {
           <div className="battle-command">
             <div className="battle-log"><span>裁判记录</span><i className={battleBusy ? "turn-status running" : "turn-status"}>{battleBusy ? "回合演出" : "等待指令"}</i><p>{examLog}</p></div>
             {!examWon ? <div className="command-grid two">
-              <button type="button" disabled={battleBusy || !equippedSkillDefinitions[0]} onClick={() => examAction(0)}><span>技能 01</span><b>{equippedSkillDefinitions[0]?.name ?? "未配置"}</b><small>{equippedSkillDefinitions[0]?.power === null ? "变化技能" : `威力 ${equippedSkillDefinitions[0]?.power ?? 0}`}</small></button>
-              <button type="button" disabled={battleBusy || !equippedSkillDefinitions[1]} onClick={() => examAction(1)}><span>技能 02</span><b>{equippedSkillDefinitions[1]?.name ?? "未配置"}</b><small>{equippedSkillDefinitions[1]?.power === null ? "变化技能" : `威力 ${equippedSkillDefinitions[1]?.power ?? 0}`}</small></button>
+              {equippedSkillDefinitions.map((skill, slot) => <button type="button" key={skill.name} disabled={battleBusy} onClick={() => examAction(slot)}><span>技能 {String(slot + 1).padStart(2, "0")}</span><b>{skill.name}</b><small>{skill.power === null ? "变化技能" : `威力 ${skill.power}`}</small></button>)}
             </div> : <button type="button" className="primary-action battle-continue" onClick={() => go("festival")}><span>参加黄金庆典</span><b>›</b></button>}
           </div>
         </section>
@@ -2454,13 +2682,23 @@ export default function Home() {
         />
       )}
 
+      {fieldCampOpen && (
+        <FieldCampModal
+          inventory={inventory}
+          research={fieldResearch}
+          onBuy={purchaseSupply}
+          onClaim={claimResearchReward}
+          onClose={() => setFieldCampOpen(false)}
+        />
+      )}
+
       {helpOpen && (
         <div className="modal-backdrop" onClick={() => setHelpOpen(false)}>
           <section className="help-modal" onClick={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setHelpOpen(false)} aria-label="关闭">×</button>
             <small>TRAINER HANDBOOK</small><h2>旅行手册</h2>
-            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、发光物体或人物。</p></div><div><kbd>高草</kbd><b>野外遭遇</b><p>在金色高草里移动会遇到野生宠物。</p></div><div><kbd>自动</kbd><b>保存进度</b><p>每次进入新场景都会保存在本机。</p></div></div>
-            <p className="help-note">这是《宠物王国：灵契》的可玩序章原型，玩法与剧情会在后续章节中继续扩展。</p>
+            <div className="help-grid"><div><kbd>WASD</kbd><b>流畅移动</b><p>支持方向键与斜向行走；贴近障碍会自然沿边滑动。</p></div><div><kbd>E</kbd><b>互动</b><p>靠近城门、营地、发光物体或人物。</p></div><div><kbd>高草</kbd><b>重复遭遇</b><p>野生宠物会持续出现；可以战斗、捕捉或撤离。</p></div><div><kbd>营地</kbd><b>补给与委托</b><p>使用战斗所得金币购买胶囊和莓果，并提交生态调查。</p></div></div>
+            <p className="help-note">宠物拥有四个技能槽。等级、攻防、属性克制、体力、安抚程度与剩余物资都会影响野外战结果。</p>
           </section>
         </div>
       )}

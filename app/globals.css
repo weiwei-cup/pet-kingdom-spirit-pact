@@ -205,6 +205,30 @@ img {
   margin-left: auto;
 }
 
+.adventure-wallet {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 4px 7px;
+  border: 2px solid #516f66;
+  color: #87bcae;
+  background: #0d2931;
+  box-shadow: 3px 3px 0 #07171e;
+  font: 6px ui-monospace, monospace;
+}
+
+.adventure-wallet span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-right: 5px;
+  border-right: 1px solid #38564f;
+}
+
+.adventure-wallet span:last-child { padding-right: 0; border-right: 0; }
+.adventure-wallet b { color: #ffe18c; font-size: 9px; }
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -2183,6 +2207,18 @@ img {
 .command-grid.two { grid-template-columns: repeat(2, 1fr); }
 .command-grid.four { grid-template-columns: repeat(4, 1fr); }
 
+.wild-command-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: center;
+}
+
+.wild-command-grid button {
+  min-height: 64px;
+  padding: 7px 9px;
+}
+
+.wild-command-grid button > b { margin: 4px 0 3px; font-size: 10px; }
+
 .command-grid button {
   position: relative;
   min-height: 88px;
@@ -2911,6 +2947,77 @@ img {
   background: #fff0a3;
 }
 
+/* Field camp, shop and repeatable research */
+.field-camp-modal {
+  position: relative;
+  width: min(900px, 94vw);
+  max-height: calc(100svh - 34px);
+  padding: 25px;
+  border: 4px solid #dcb55c;
+  color: #f4e7bf;
+  background:
+    linear-gradient(90deg, rgba(52, 91, 79, 0.18) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(rgba(52, 91, 79, 0.18) 1px, transparent 1px) 0 0 / 28px 28px,
+    #0d2931;
+  box-shadow: 8px 8px 0 #06141a, inset 0 0 0 3px #284d48;
+  overflow: auto;
+}
+
+.field-camp-modal > header { padding-right: 48px; }
+.field-camp-modal > header small { color: #79d1b2; font: 7px ui-monospace, monospace; letter-spacing: .16em; }
+.field-camp-modal > header h2 { margin: 6px 0; color: #ffe18d; font: 900 34px "STKaiti", "KaiTi", serif; }
+.field-camp-modal > header p { margin: 0; color: #9cbcaf; font-size: 8px; }
+
+.camp-wallet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 18px 0 12px;
+  padding: 10px 12px;
+  border: 2px solid #40685f;
+  background: #102f36;
+}
+
+.camp-wallet span { color: #78aa9d; font-size: 7px; }
+.camp-wallet b { margin-right: auto; color: #ffe190; font: 18px ui-monospace, monospace; }
+.camp-wallet i { padding: 4px 7px; border: 1px solid #4d7069; color: #bcd0bd; background: #0a242b; font: normal 7px ui-monospace, monospace; }
+
+.camp-layout { display: grid; grid-template-columns: .9fr 1.1fr; gap: 12px; }
+.camp-layout > section { padding: 14px; border: 2px solid #3b625c; background: rgba(15, 46, 53, .94); }
+.camp-layout h3 { margin: 0 0 11px; color: #f2ce73; font-size: 12px; }
+
+.camp-shop { display: flex; flex-direction: column; gap: 7px; }
+.camp-shop h3 { margin-bottom: 4px; }
+.camp-shop > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 2px solid #4f7a71;
+  color: #edf0d6;
+  background: #163c42;
+  box-shadow: 2px 2px 0 #07191e;
+  cursor: pointer;
+  text-align: left;
+}
+
+.camp-shop > button:hover:not(:disabled) { border-color: #e2bc61; background: #24574f; }
+.camp-shop > button:disabled { opacity: .45; cursor: not-allowed; }
+.camp-shop > button span { display: flex; flex-direction: column; gap: 4px; }
+.camp-shop > button b { color: #ffe59a; font-size: 10px; }
+.camp-shop > button small { color: #8eb3a8; font-size: 6px; }
+.camp-shop > button em { color: #efca6b; font: normal 8px ui-monospace, monospace; white-space: nowrap; }
+
+.camp-research > p { min-height: 34px; color: #93b3a8; font-size: 7px; line-height: 1.6; }
+.camp-research > div { display: flex; justify-content: space-between; margin-top: 6px; padding: 7px 8px; border-left: 3px solid #52796e; background: #0c2930; font-size: 7px; }
+.camp-research > div b { color: #f2d17a; font: 9px ui-monospace, monospace; }
+.camp-research > button { width: 100%; margin-top: 11px; padding: 10px; border: 2px solid #607d6d; color: #788f86; background: #142e32; font-weight: 800; }
+.camp-research.is-ready > button:not(:disabled) { border-color: #e3bd5f; color: #fff0a1; background: #245c52; cursor: pointer; animation: commandReady .8s steps(2) infinite; }
+.camp-research.is-claimed > button { border-color: #55746d; color: #86b6a7; }
+.camp-research > small { display: block; margin-top: 7px; color: #7fa99c; font-size: 6px; text-align: center; }
+
 .collection-header {
   display: flex;
   align-items: center;
@@ -3442,7 +3549,7 @@ img {
 
 .skill-slot-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(70px, 1fr) repeat(4, auto);
   align-items: center;
   gap: 4px;
   margin: 6px 0 0 39px;
@@ -3823,6 +3930,9 @@ img {
   .brand-orb { width: 36px; height: 36px; }
   .mini-brand b { font-size: 11px; }
   .partner-chip { display: none; }
+  .adventure-wallet { height: 34px; padding: 2px 4px; gap: 2px; }
+  .adventure-wallet span { gap: 2px; padding-right: 3px; font-size: 0; }
+  .adventure-wallet b { font-size: 8px; }
   .icon-button { width: 34px; height: 34px; }
   .collection-button { width: 36px; height: 36px; }
   .collection-button b { font-size: 11px; }
@@ -3910,6 +4020,7 @@ img {
   .command-grid.two,
   .command-grid.four { grid-template-columns: repeat(2, 1fr); }
   .command-grid button { min-height: 68px; padding: 7px; }
+  .wild-command-grid button { min-height: 52px; }
   .command-grid button > b { margin: 4px 0 2px; font-size: 10px; }
   .battle-continue { width: 100%; min-width: 0; min-height: 48px; }
   .memory-ribbon { top: 9%; left: 48%; width: 185px; transform: translateX(-50%) scale(0.72); transform-origin: top; }
@@ -3947,6 +4058,14 @@ img {
   .ending-actions .primary-action { width: 100%; min-width: 0; }
 
   .help-grid { grid-template-columns: 1fr; }
+
+  .field-camp-backdrop { padding: 6px; }
+  .field-camp-modal { width: 100%; max-height: calc(100svh - 12px); padding: 15px; border-width: 3px; }
+  .field-camp-modal > header h2 { font-size: 27px; }
+  .camp-wallet { flex-wrap: wrap; margin: 11px 0 8px; }
+  .camp-wallet b { margin-right: 40%; }
+  .camp-layout { grid-template-columns: 1fr; }
+  .camp-layout > section { padding: 10px; }
 
   .collection-backdrop { padding: 6px; }
   .collection-modal {
