@@ -36,6 +36,7 @@ import {
 
 type Phase =
   | "title"
+  | "prologue"
   | "name"
   | "home"
   | "shelter"
@@ -140,6 +141,30 @@ type DialogueLine = {
   tone?: "normal" | "warning" | "soft";
 };
 
+type CinematicEffect = "rain" | "lightning" | "bell" | "fracture" | "warm" | "blackout";
+type CinematicCamera = "wide" | "push" | "left" | "right" | "close";
+type CinematicActor = {
+  id: "player" | "keeper" | "angela" | "guardian" | PartnerId;
+  name: string;
+  x: number;
+  y: number;
+  motion?: "arrive" | "walk" | "run" | "guard" | "reach" | "startle";
+  mirror?: boolean;
+};
+type CinematicShot = {
+  id: string;
+  background: string;
+  kicker?: string;
+  title?: string;
+  speaker?: string;
+  role?: string;
+  text?: string;
+  tone?: "normal" | "warning" | "soft";
+  camera?: CinematicCamera;
+  effect?: CinematicEffect;
+  actors?: CinematicActor[];
+};
+
 type RoadFacing = "up" | "down" | "left" | "right";
 type BattleSide = "ally" | "enemy" | "trainer";
 type BattleFxKind = PartnerId | "wind" | "guard" | "heal" | "calm" | "capsule" | "memory" | "call" | "claw";
@@ -233,6 +258,21 @@ const PARTNERS: Record<PartnerId, Partner & { id: PartnerId }> = {
     hp: 62,
     attack: "潮泡连弹",
     support: "清凉水幕",
+  },
+};
+
+const PARTNER_REACTIONS: Record<PartnerId, { action: string; promise: string }> = {
+  leaf: {
+    action: "它从叶筐里叼出一枚最完整的果子，轻轻推到你的鞋边；等你蹲下后，才小心地往前挪了一步。",
+    promise: "它不擅长冲在最前面，却会记得为每个受伤的伙伴留一片新叶。",
+  },
+  metal: {
+    action: "它故意撞响门边的铜罐，仰头等你退开。你没有退，它便转过身，把没有甲片保护的一侧交给了你。",
+    promise: "它会试探每一个靠近的人；一旦认定你，就绝不会把背后的路让给敌人。",
+  },
+  tide: {
+    action: "它把你的推荐信藏进水盆，又在你追来时主动捞起纸角。水花落下，它已经笑着抱住了你的手腕。",
+    promise: "它总把危险当成新的游戏，但真正害怕时，只会握紧最信任的那只手。",
   },
 };
 
@@ -607,8 +647,15 @@ const CHARACTER_ART: Record<CharacterVariant, string> = {
 
 const MAP_PLAYER_ART = "./pixel/player-walk-atlas.webp?v=3";
 
+const CINEMATIC_ART = {
+  rainAcademy: "./pixel/prologue-rain-academy.webp?v=1",
+  pactBreak: "./pixel/prologue-pact-break.webp?v=1",
+  shelterBell: "./pixel/shelter-black-bell.webp?v=1",
+} as const;
+
 const SCENE_ART: Record<Phase, string> = {
   title: "./pixel/title-landscape.webp?v=2",
+  prologue: CINEMATIC_ART.rainAcademy,
   name: "./pixel/protagonist-home-v1.webp?v=1",
   home: "./pixel/protagonist-home-v1.webp?v=1",
   shelter: "./pixel/shelter-interior.webp?v=2",
@@ -959,9 +1006,11 @@ const MAP_ATMOSPHERES: Record<ExplorationPhase, MapAtmosphereDefinition> = {
 };
 
 const SCENE_PRELOADS: Partial<Record<Phase, string[]>> = {
+  title: [CINEMATIC_ART.rainAcademy, CINEMATIC_ART.pactBreak],
+  prologue: [SCENE_ART.home, CINEMATIC_ART.pactBreak],
   name: [SCENE_ART.home],
   home: [SCENE_ART.shelter],
-  shelter: [SCENE_ART.road, PET_ART.wild, PET_ART.bird, PET_ART.ember, PET_ART.moss, PET_ART.spark],
+  shelter: [CINEMATIC_ART.shelterBell, SCENE_ART.road, PET_ART.wild, PET_ART.bird, PET_ART.ember, PET_ART.moss, PET_ART.spark],
   road: [SCENE_ART.city],
   capture: [SCENE_ART.city],
   city: [SCENE_ART.exam, PET_ART.breeze],
@@ -1012,12 +1061,15 @@ function isHomeWalkable(position: Position) {
 
 function homeStoryLines(story: HomeStoryId, playerName: string): DialogueLine[] {
   if (story === "wake") return [
-    { speaker: "旁白", text: "临虹村的晨钟敲了七下。推荐信上的墨迹还没有干，窗外已经有人带着宠物赶往黄金庆典。" },
-    { speaker: playerName, text: "今天就要去黎叔那里了……先把该带的东西收好，也跟家里好好道个别。" },
+    { speaker: "旁白", text: "临虹村的晨钟敲了七下。梦里的雨声已经停了，可那句“不要登记灵契”仍像贴在耳边。" },
+    { speaker: playerName, text: "又是那个梦……白色的宠物、断掉的红线，还有我从没去过的学院。为什么偏偏在今天梦见？" },
+    { speaker: "旁白", text: "窗外，新训练师正带着伙伴赶往黄金庆典。书桌上的推荐信墨迹未干，墙上那张旧合影似乎也被人重新摆正过。" },
+    { speaker: playerName, text: "先把该带的东西收好。去照护所之前，我想再看看那张照片。" },
   ];
   if (story === "photo") return [
     { speaker: "旁白", text: "褪色的合影里，年轻时的母亲和黎叔站在彩虹学院门前。画面边缘还有一只白色宠物，却没有留下名字。" },
-    { speaker: playerName, text: "这张照片以前一直收在箱底。母亲为什么偏偏在今天把它挂出来？" },
+    { speaker: playerName, text: "和梦里一样……连拱门上的黑铃都在同一个位置。这不是我第一次梦见它，是有人想让我记起来。" },
+    { speaker: "旁白", text: "照片背面有一道被水泡开的字迹，只能辨认出半句：“如果它再次主动走向你——”" },
   ];
   if (story === "letter") return [
     { speaker: "旁白", text: `推荐信写着：“兹推荐临虹村居民${playerName}参加彩虹学院新生考核。”纸角还有黎叔添上的一行小字。` },
@@ -1040,6 +1092,171 @@ function shelterIntroLines(playerName: string): DialogueLine[] {
     { speaker: playerName, text: "照片里的白色宠物是谁？为什么它的名字被裁掉了？" },
     { speaker: "黎叔", text: "等你真正拥有愿意并肩同行的伙伴，我会把知道的都告诉你。现在，先别看封印球。" },
     { speaker: "黎叔", text: "这三个小家伙等了你一早。今天不是你单方面挑选它们——你们要互相选择。", tone: "soft" },
+  ];
+}
+
+const PROLOGUE_SHOTS: CinematicShot[] = [
+  {
+    id: "rain-gate",
+    background: CINEMATIC_ART.rainAcademy,
+    kicker: "十二年前 · 彩虹学院旧研究区",
+    title: "那一夜，学院没有敲钟",
+    speaker: "旁白",
+    text: "暴雨封住了通往彩虹城的路。午夜之后，学院旧研究区却亮起了一扇本该永久封闭的门。",
+    camera: "push",
+    effect: "rain",
+  },
+  {
+    id: "arrive",
+    background: CINEMATIC_ART.rainAcademy,
+    speaker: "黎叔",
+    role: "学院照护员 · 十二年前",
+    text: "阿岚，别回头。黑铃不是从钟塔传来的——它在找这个孩子，还有一路护着她的那只白色宠物。",
+    camera: "left",
+    effect: "lightning",
+    actors: [
+      { id: "keeper", name: "黎叔", x: 38, y: 70, motion: "walk" },
+      { id: "angela", name: "阿岚", x: 49, y: 71, motion: "reach", mirror: true },
+      { id: "guardian", name: "白色宠物", x: 58, y: 74, motion: "guard" },
+    ],
+  },
+  {
+    id: "unregistered",
+    background: CINEMATIC_ART.rainAcademy,
+    speaker: "阿岚",
+    role: "孩子的母亲",
+    text: "它没有编号，也不肯进入封印球。可这一路上，所有失控的宠物都只愿意听它的声音。黎哥，我们不能把它交给共鸣台。",
+    camera: "right",
+    effect: "rain",
+    actors: [
+      { id: "angela", name: "阿岚", x: 43, y: 70, motion: "walk" },
+      { id: "player", name: "年幼的孩子", x: 51, y: 75 },
+      { id: "guardian", name: "白色宠物", x: 59, y: 73, motion: "guard", mirror: true },
+    ],
+  },
+  {
+    id: "bell-order",
+    background: CINEMATIC_ART.rainAcademy,
+    speaker: "？？？",
+    role: "扩音器中的声音",
+    text: "检测到未登记灵契。执行回收。把孩子留下，白色实验体带回地下层。",
+    tone: "warning",
+    camera: "close",
+    effect: "bell",
+  },
+  {
+    id: "protect",
+    background: CINEMATIC_ART.pactBreak,
+    speaker: "白色宠物",
+    text: "别怕。无论名字被抹去多少次，我都会记得——应该站在你前面。",
+    tone: "soft",
+    camera: "push",
+    effect: "bell",
+  },
+  {
+    id: "warning",
+    background: CINEMATIC_ART.pactBreak,
+    speaker: "阿岚",
+    text: "不要断开灵契！一旦主动切断共鸣，你会忘记这孩子，也会失去回到她身边的路！",
+    tone: "warning",
+    camera: "right",
+    effect: "fracture",
+  },
+  {
+    id: "break",
+    background: CINEMATIC_ART.pactBreak,
+    speaker: "旁白",
+    text: "红色契线崩断的瞬间，黑铃第一次停了下来。白色宠物回头看了孩子一眼——像是要把一张尚未见过的脸，记进已经空白的记忆。",
+    camera: "close",
+    effect: "fracture",
+  },
+  {
+    id: "promise",
+    background: CINEMATIC_ART.pactBreak,
+    speaker: "黎叔",
+    text: "我会把那张合影留下。等她长大，等下一只宠物愿意主动走向她……我就把那一夜，全都告诉她。",
+    tone: "soft",
+    camera: "left",
+    effect: "rain",
+  },
+  {
+    id: "years-later",
+    background: CINEMATIC_ART.pactBreak,
+    kicker: "十二年后 · 临虹村",
+    title: "同一个梦，再次响起",
+    speaker: "梦中的声音",
+    text: "……不要让任何人，替你的伙伴登记灵契。",
+    tone: "warning",
+    camera: "wide",
+    effect: "blackout",
+  },
+];
+
+function shelterIncidentShots(playerName: string, chosen: Partner): CinematicShot[] {
+  return [
+    {
+      id: "first-step",
+      background: SCENE_ART.shelter,
+      kicker: "临虹村宠物照护所",
+      title: "它先作出了选择",
+      speaker: "黎叔",
+      text: `${chosen.name}没有看封印球。它越过地上的黄线，自己站到了${playerName}身边。记住这一刻——灵契应该从这一步开始。`,
+      tone: "soft",
+      camera: "push",
+      effect: "warm",
+      actors: [
+        { id: "keeper", name: "黎叔", x: 34, y: 70 },
+        { id: "player", name: playerName, x: 51, y: 72, motion: "reach" },
+        { id: chosen.id as PartnerId, name: chosen.name, x: 59, y: 75, motion: "arrive", mirror: true },
+      ],
+    },
+    {
+      id: "bell-return",
+      background: CINEMATIC_ART.shelterBell,
+      speaker: "旁白",
+      text: "就在黎叔伸手去取登记簿时，一声低沉的铃响穿过墙壁。架上的封印球同时熄灭，窗外的宠物全部望向水道。",
+      camera: "wide",
+      effect: "bell",
+    },
+    {
+      id: "escape",
+      background: CINEMATIC_ART.shelterBell,
+      speaker: "黎叔",
+      text: "那是昨夜从学院送来的伤员！它没有编号，伤口里还有黑铃的共鸣——别碰它留下的紫色脚印！",
+      tone: "warning",
+      camera: "push",
+      effect: "fracture",
+    },
+    {
+      id: "partner-runs",
+      background: CINEMATIC_ART.shelterBell,
+      speaker: playerName,
+      text: `${chosen.name}，等等！你听见它在求救，对吗？`,
+      camera: "right",
+      effect: "warm",
+      actors: [
+        { id: chosen.id as PartnerId, name: chosen.name, x: 70, y: 69, motion: "run" },
+      ],
+    },
+    {
+      id: "keeper-trust",
+      background: CINEMATIC_ART.shelterBell,
+      speaker: "黎叔",
+      text: "追上去，但别急着战斗。先让它知道你们不是来回收它的。还有——如果再听见黑铃，立刻回来找我。",
+      tone: "soft",
+      camera: "left",
+      effect: "bell",
+    },
+    {
+      id: "chapter-card",
+      background: CINEMATIC_ART.shelterBell,
+      kicker: "序章",
+      title: "没有登记的伙伴",
+      speaker: "新的灵契记录",
+      text: `与${chosen.name}追入青崖水道，找到那只带着紫色脚印的受伤宠物。`,
+      camera: "wide",
+      effect: "blackout",
+    },
   ];
 }
 
@@ -1540,6 +1757,102 @@ function Dialogue({ lines, onComplete, backdrop }: { lines: DialogueLine[]; onCo
         <div className="dialogue-progress"><span>{String(index + 1).padStart(2, "0")}</span> / {String(lines.length).padStart(2, "0")}</div>
         <button type="button" className="dialogue-next" onClick={(event) => { event.stopPropagation(); next(); }} aria-label="下一句">›</button>
       </div>
+    </section>
+  );
+}
+
+function CinematicScene({ shots, onComplete, onCue }: { shots: CinematicShot[]; onComplete: () => void; onCue?: (shot: CinematicShot, index: number) => void }) {
+  const [index, setIndex] = useState(0);
+  const [revealed, setRevealed] = useState(0);
+  const [exiting, setExiting] = useState(false);
+  const completedRef = useRef(false);
+  const transitionTimerRef = useRef<number | null>(null);
+  const shot = shots[Math.min(index, shots.length - 1)];
+  const characters = Array.from(shot.text ?? "");
+  const textComplete = revealed >= characters.length;
+
+  useEffect(() => {
+    onCue?.(shot, index);
+    if (!shot.text) return;
+    const timer = window.setInterval(() => {
+      setRevealed((current) => {
+        if (current >= Array.from(shot.text ?? "").length) {
+          window.clearInterval(timer);
+          return current;
+        }
+        return current + 1;
+      });
+    }, 24);
+    return () => window.clearInterval(timer);
+  }, [index, onCue, shot]);
+
+  const finish = useCallback(() => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    onComplete();
+  }, [onComplete]);
+
+  const next = useCallback(() => {
+    if (!textComplete) {
+      setRevealed(characters.length);
+      return;
+    }
+    if (index >= shots.length - 1) {
+      finish();
+      return;
+    }
+    setExiting(true);
+    transitionTimerRef.current = window.setTimeout(() => {
+      setRevealed(0);
+      setExiting(false);
+      setIndex((current) => Math.min(shots.length - 1, current + 1));
+      transitionTimerRef.current = null;
+    }, 220);
+  }, [characters.length, finish, index, shots.length, textComplete]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        next();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [next]);
+
+  useEffect(() => () => {
+    if (transitionTimerRef.current !== null) window.clearTimeout(transitionTimerRef.current);
+  }, []);
+
+  return (
+    <section className={`cinematic-scene cinematic-${shot.effect ?? "warm"}${exiting ? " is-exiting" : ""}`} onClick={next} role="button" tabIndex={0} aria-label="继续剧情">
+      <div key={shot.id} className={`cinematic-image camera-${shot.camera ?? "wide"}`} style={{ backgroundImage: `url(${shot.background})` }} />
+      <div className="cinematic-shade" />
+      <div className="cinematic-weather" aria-hidden="true">{Array.from({ length: 18 }).map((_, drop) => <i key={drop} />)}</div>
+      <div className="cinematic-bell-rings" aria-hidden="true"><i /><i /><i /></div>
+      {shot.actors && (
+        <div className="cinematic-actors" aria-hidden="true">
+          {shot.actors.map((actor) => {
+            const isPet = actor.id === "guardian" || actor.id === "leaf" || actor.id === "metal" || actor.id === "tide";
+            return (
+              <div key={`${shot.id}-${actor.name}`} className={`cinematic-actor motion-${actor.motion ?? "still"}${actor.mirror ? " is-mirrored" : ""}`} style={{ left: `${actor.x}%`, top: `${actor.y}%` }}>
+                {isPet ? <PetSprite id={actor.id as PetArtId} size={actor.id === "guardian" ? "lg" : "md"} /> : <Character name={actor.name} variant={actor.id as CharacterVariant} />}
+                <span>{actor.name}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {(shot.kicker || shot.title) && <div className="cinematic-title"><small>{shot.kicker}</small>{shot.title && <h2>{shot.title}</h2>}<i /></div>}
+      <button type="button" className="cinematic-skip" onClick={(event) => { event.stopPropagation(); finish(); }}>跳过剧情</button>
+      <div className={`cinematic-dialogue tone-${shot.tone ?? "normal"}`}>
+        <div className="cinematic-speaker"><small>{shot.role ?? "STORY"}</small><strong>{shot.speaker ?? "旁白"}</strong></div>
+        <p>{characters.slice(0, revealed).join("")}<i className={textComplete ? "is-ready" : ""} /></p>
+        <div className="cinematic-progress"><span>{String(index + 1).padStart(2, "0")}</span><b>{shots.map((item, marker) => <i key={item.id} className={marker <= index ? "active" : ""} />)}</b><em>{String(shots.length).padStart(2, "0")}</em></div>
+        <button type="button" className="cinematic-next" onClick={(event) => { event.stopPropagation(); next(); }}>{textComplete ? "继续" : "显示全文"}<b>›</b></button>
+      </div>
+      <span className="cinematic-hint">Enter / 空格 · 继续</span>
     </section>
   );
 }
@@ -2071,6 +2384,7 @@ export default function Home() {
   const [homeStory, setHomeStory] = useState<HomeStoryId | null>(null);
   const [homeToast, setHomeToast] = useState("先看看书桌上的推荐信。");
   const [shelterIntroOpen, setShelterIntroOpen] = useState(false);
+  const [shelterIncidentOpen, setShelterIncidentOpen] = useState(false);
   const [toast, setToast] = useState("沿着石径前往彩虹城");
   const [battleFx, setBattleFx] = useState<BattleFx | null>(null);
   const [battleBusy, setBattleBusy] = useState(false);
@@ -2164,6 +2478,7 @@ export default function Home() {
     attack: primaryBattleSkill?.name ?? "基础冲撞",
     support: secondaryBattleSkill?.name ?? primaryBattleSkill?.name ?? "守护姿态",
   } : null;
+  const openingIncidentShots = useMemo(() => partnerId ? shelterIncidentShots(playerName, PARTNERS[partnerId]) : [], [partnerId, playerName]);
   const routeEncounter = ROUTE_ENCOUNTERS[routeEncounterId];
   const trainerDefinition = TRAINER_BATTLES[trainerBattleId];
   const trainerEnemyPet = trainerDefinition.team[Math.min(trainerEnemyIndex, trainerDefinition.team.length - 1)];
@@ -2212,7 +2527,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (phase === "title" || phase === "name") return;
+    if (phase === "title" || phase === "prologue" || phase === "name") return;
     const save: SaveData = {
       phase,
       playerName,
@@ -2287,6 +2602,14 @@ export default function Home() {
       // Audio is optional; game input should never depend on it.
     }
   }, [soundOn]);
+
+  const playCinematicCue = useCallback((shot: CinematicShot) => {
+    if (shot.effect === "bell") playTone(118);
+    else if (shot.effect === "fracture") playTone(185);
+    else if (shot.effect === "lightning") playTone(240);
+    else if (shot.effect === "blackout") playTone(96);
+    else playTone(480);
+  }, [playTone]);
 
   const animateBattleFx = useCallback(async (input: BattleFxInput, onImpact?: () => void) => {
     const id = ++battleFxId.current;
@@ -2482,6 +2805,7 @@ export default function Home() {
     setHomeStory(null);
     setHomeToast("先看看书桌上的推荐信。");
     setShelterIntroOpen(false);
+    setShelterIncidentOpen(false);
     setBattleFx(null);
     setBattleBusy(false);
     setRoadPos(ROAD_START);
@@ -2539,7 +2863,7 @@ export default function Home() {
     setBossPlayerHp(68);
     setMemories([]);
     setBossWon(false);
-    go("name");
+    go("prologue");
   };
 
   const continueGame = () => {
@@ -2561,7 +2885,7 @@ export default function Home() {
         (saved.storedPetIds ?? []).filter(isPetSpeciesId),
         allRestoredOwned.slice(6),
       ).filter((id) => !restoredOwned.includes(id));
-      const restoredPhase = saved.phase === "title" || saved.phase === "name"
+      const restoredPhase = saved.phase === "title" || saved.phase === "prologue" || saved.phase === "name"
         ? "shelter"
         : saved.phase === "trainerBattle" ? (saved.chapterQuest === "observatory" ? "observatory" : "windPass") : saved.phase;
       const restoredSeen = mergePetIds(
@@ -2618,6 +2942,7 @@ export default function Home() {
       setHomeStory(null);
       setHomeToast(restoredHomeDiscoveries.length === 3 ? "东西都收好了。到正门按 E 前往照护所。" : "离家前，再看看房间里发光的地方。");
       setShelterIntroOpen(false);
+      setShelterIncidentOpen(false);
       if (restoredActivePetId) {
         const restoredActiveProgress = restoredProgress.find((entry) => entry.id === restoredActivePetId) ?? createPetProgress(restoredActivePetId);
         const restoredHp = scaledPetStats(PET_SPECIES[restoredActivePetId], restoredActiveProgress.level, restoredActiveProgress.evolved).hp;
@@ -2645,6 +2970,13 @@ export default function Home() {
     setWildPlayerHp(PARTNERS[id].hp);
     playTone(id === "leaf" ? 480 : id === "metal" ? 330 : 580);
   };
+
+  const completeShelterIncident = useCallback(() => {
+    setShelterIncidentOpen(false);
+    setCaptureLog("紫色脚印在高草边突然中断。那只受伤的茸角鼠正缩在草叶后，警惕地盯着你们。 ");
+    go("road");
+    setToast("沿紫色脚印进入高草，找到从照护所逃走的受伤宠物");
+  }, [go]);
 
   const setLeadPet = useCallback((id: PetSpeciesId) => {
     if (!ownedPetIds.includes(id)) return;
@@ -3536,7 +3868,7 @@ export default function Home() {
   };
 
   const chapterLabel = useMemo(() => {
-    if (["title", "name", "home", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
+    if (["title", "prologue", "name", "home", "shelter", "road", "capture"].includes(phase)) return "序章 · 临虹村";
     if (["city", "exam", "festival"].includes(phase)) return "序章 · 黄金庆典";
     if (["rupture", "boss", "aftermath"].includes(phase)) return "序章 · 灵契断裂";
     if (["highland", "windPass", "pasture", "observatory", "trainerBattle"].includes(phase)) return "第一章 · 黑铃回声";
@@ -3547,7 +3879,7 @@ export default function Home() {
     <main className={`game-shell phase-${phase}`}>
       <img className="scene-image" src={SCENE_ART[phase]} alt="" aria-hidden="true" draggable={false} />
       <div className="world-noise" />
-      {phase !== "title" && (
+      {phase !== "title" && phase !== "prologue" && (
         <header className="game-hud">
           <button type="button" className="mini-brand" onClick={() => setPhase("title")} aria-label="返回标题">
             <span className="brand-orb">契</span>
@@ -3586,6 +3918,10 @@ export default function Home() {
           </div>
           <div className="title-version">PROLOGUE BUILD 01</div>
         </section>
+      )}
+
+      {phase === "prologue" && (
+        <CinematicScene shots={PROLOGUE_SHOTS} onCue={playCinematicCue} onComplete={() => go("name")} />
       )}
 
       {phase === "name" && (
@@ -3640,14 +3976,14 @@ export default function Home() {
               {Object.values(PARTNERS).map((candidate) => (
                 <button type="button" key={candidate.id} className={`partner-card${partnerId === candidate.id ? " selected" : ""}`} onClick={() => selectPartner(candidate.id)}>
                   <div className="partner-art"><PetSprite id={candidate.id} size="lg" /><span>{candidate.kind}</span></div>
-                  <div className="partner-copy"><small>{candidate.nature}</small><b>{candidate.name}</b><p>{candidate.quote}</p></div>
+                  <div className="partner-copy"><small>{candidate.nature}</small><b>{candidate.name}</b><p>{partnerId === candidate.id ? PARTNER_REACTIONS[candidate.id].action : candidate.quote}</p></div>
                   <i className="select-mark">{partnerId === candidate.id ? "已靠近" : "靠近它"}</i>
                 </button>
               ))}
             </div>
             <div className="shelter-footer">
-              <p>{partner ? `“${partner.name}看了看黎叔，又主动站到了${playerName}身边。”` : "先了解它们的性格，再看看谁愿意向你走来。"}</p>
-              <button type="button" className="primary-action" disabled={!partnerId} onClick={() => go("road")}><span>一起出发</span><b>›</b></button>
+              <p>{partnerId ? PARTNER_REACTIONS[partnerId].promise : "先了解它们的性格，再看看谁愿意向你走来。"}</p>
+              <button type="button" className="primary-action" disabled={!partnerId} onClick={() => setShelterIncidentOpen(true)}><span>回应它的选择</span><b>›</b></button>
             </div>
           </div>
         </section>
@@ -3655,6 +3991,10 @@ export default function Home() {
 
       {phase === "shelter" && shelterIntroOpen && (
         <Dialogue lines={shelterIntroLines(playerName)} onComplete={() => setShelterIntroOpen(false)} />
+      )}
+
+      {phase === "shelter" && shelterIncidentOpen && partnerId && (
+        <CinematicScene shots={openingIncidentShots} onCue={playCinematicCue} onComplete={completeShelterIncident} />
       )}
 
       {activeMap && partner && (
@@ -3670,16 +4010,16 @@ export default function Home() {
           roadInGrass={roadInGrass}
           toast={toast}
           encounterPending={encounterPending}
-          missionTitle={phase === "road" && captured ? "支线 · 青崖生态调查" : activeMap.missionTitle}
-          missionText={phase === "road" && captured ? "继续调查高草生态，或沿石阶前往东北方的彩虹城门。" : activeMap.missionText}
+          missionTitle={phase === "road" ? captured ? "支线 · 青崖生态调查" : "主线 · 追踪紫色脚印" : activeMap.missionTitle}
+          missionText={phase === "road" ? captured ? "继续调查高草生态，或沿石阶前往东北方的彩虹城门。" : "沿照护所外的水道追踪脚印，在高草里找到受伤的未登记宠物。" : activeMap.missionText}
           missionItems={phase === "road" ? captured ? [
             { label: `发现不同宠物 ${Math.min(fieldResearch.encounteredSpecies.length, FIELD_RESEARCH_REQUIREMENTS.species)}/${FIELD_RESEARCH_REQUIREMENTS.species}`, done: fieldResearch.encounteredSpecies.length >= FIELD_RESEARCH_REQUIREMENTS.species },
             { label: `完成战斗 ${Math.min(fieldResearch.resolvedBattles, FIELD_RESEARCH_REQUIREMENTS.battles)}/${FIELD_RESEARCH_REQUIREMENTS.battles}`, done: fieldResearch.resolvedBattles >= FIELD_RESEARCH_REQUIREMENTS.battles },
             { label: fieldResearch.claimed ? "调查报酬已领取" : `捕捉宠物 ${Math.min(fieldResearch.capturedPets, FIELD_RESEARCH_REQUIREMENTS.captures)}/${FIELD_RESEARCH_REQUIREMENTS.captures}`, done: fieldResearch.capturedPets >= FIELD_RESEARCH_REQUIREMENTS.captures },
           ] : [
-            { label: "在高草中遭遇宠物", done: false },
-            { label: "完成第一次捕捉", done: false },
-            { label: "返回营地或前往城门", done: false },
+            { label: "沿紫色脚印进入高草", done: false },
+            { label: "安抚受伤的宠物", done: false },
+            { label: "完成第一次自由灵契", done: false },
           ] : phase === "city" ? [
             { label: "从南门进入学院区", done: roadPos.y < 82 },
             { label: "绕过中央星泉", done: roadPos.y < 42 },
